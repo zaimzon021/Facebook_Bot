@@ -148,19 +148,25 @@ class FacebookBot:
 
         print(f"Found {len(video_files)} videos to schedule.")
 
-        start_date = datetime.now()
+        # Start from NEXT day (tomorrow)
+        start_date = datetime.now() + timedelta(days=1)
         videos_per_day = 3
-        time_slots = ["10:00", "16:00", "22:00"]
+        time_slots = [
+            {"time": "9:00", "period": "AM"},
+            {"time": "3:00", "period": "PM"}, 
+            {"time": "9:00", "period": "PM"}
+        ]
 
         # Sort video files to ensure consistent order
         video_files.sort()
         print(f"Video files in order: {video_files}")
+        print(f"Scheduling will start from: {start_date.strftime('%d-%m-%Y')}")
 
         for i, video_file in enumerate(video_files):
             day_offset = i // videos_per_day
             time_slot_index = i % videos_per_day
             schedule_date = start_date + timedelta(days=day_offset)
-            schedule_time = time_slots[time_slot_index]
+            time_slot = time_slots[time_slot_index]
             
             # Use filename (without extension) as caption
             caption = os.path.splitext(video_file)[0]
@@ -170,7 +176,7 @@ class FacebookBot:
             print("\n" + "="*50)
             print(f"Processing video {i+1}/{len(video_files)}: {video_file}")
             print(f"Caption will be: {caption}")
-            print(f"Scheduled for: {schedule_date.strftime('%Y-%m-%d')} at {schedule_time}")
+            print(f"Scheduled for: {schedule_date.strftime('%d-%m-%Y')} at {time_slot['time']} {time_slot['period']}")
             print("="*50)
 
             video_path = os.path.join(VIDEO_FOLDER_PATH, video_file)
@@ -195,16 +201,25 @@ class FacebookBot:
                 print(f"✅ Successfully uploaded video: {video_file}")
                 
                 try:
-                    self.schedule_single_reel(caption, schedule_date, schedule_time)
-                    print(f"✅ Successfully scheduled reel for {video_file}")
-                    
-                    # Navigate back to reel composer for next video
-                    if i < len(video_files) - 1:  # Not the last video
-                        print(f"\n🔄 Preparing for next video ({i+2}/{len(video_files)})...")
-                        success = self.load_reel_composer_with_retry()
-                        if not success:
-                            print(f"❌ Failed to load reel composer for video {i+2}. Skipping remaining videos.")
-                            break
+                    schedule_success = self.schedule_single_reel(caption, schedule_date, time_slot)
+                    if schedule_success:
+                        print(f"✅ Successfully scheduled reel for {video_file}")
+                        
+                        # Only navigate back to reel composer after SUCCESSFUL scheduling
+                        if i < len(video_files) - 1:  # Not the last video
+                            print(f"\n🔄 Video scheduled successfully! Preparing for next video ({i+2}/{len(video_files)})...")
+                            print(f"🔄 Opening Meta Business Suite for next video...")
+                            
+                            # Go back to Meta Business Suite (don't refresh during scheduling)
+                            self.driver.get("https://business.facebook.com/latest/reels_composer")
+                            time.sleep(3)
+                            
+                            success = self.load_reel_composer_with_retry()
+                            if not success:
+                                print(f"❌ Failed to load reel composer for video {i+2}. Skipping remaining videos.")
+                                break
+                    else:
+                        print(f"❌ Failed to schedule reel for {video_file} - skipping to next video")
                         
                 except Exception as e:
                     logging.error(f"❌ Failed to schedule reel for {video_file}. Error: {e}")
@@ -566,8 +581,8 @@ class FacebookBot:
             print(f"Error checking Schedule options: {e}")
             return False
 
-    def click_schedule_button(self, max_attempts=3):
-        """Find and click the Schedule button in div container."""
+    def click_schedule_button_with_manual_approval(self, max_retry_cycles=3):
+        """Find and click Schedule button with retry and manual approval fallback."""
         schedule_methods = [
             {
                 "name": "Span with 'Schedule' text",
@@ -582,17 +597,18 @@ class FacebookBot:
                 "selector": "//label[contains(text(), 'Schedule')]"
             },
             {
-                "name": "Div descendant approach for Schedule",
-                "selector": "//div[descendant::*[text()='Schedule']]"
-            },
-            {
                 "name": "Any clickable Schedule element",
                 "selector": "//*[text()='Schedule' and (@role='button' or @type='button')]"
+            },
+            {
+                "name": "Button with Schedule text",
+                "selector": "//button[contains(text(), 'Schedule')]"
             }
         ]
         
-        for attempt in range(max_attempts):
-            print(f"📅 SCHEDULE BUTTON - Attempt {attempt + 1}/{max_attempts}")
+        # Try multiple cycles of all methods
+        for cycle in range(max_retry_cycles):
+            print(f"📅 SCHEDULE BUTTON SEARCH - Cycle {cycle + 1}/{max_retry_cycles}")
             
             for i, method in enumerate(schedule_methods):
                 method_num = i + 1
@@ -600,16 +616,290 @@ class FacebookBot:
                 
                 try:
                     # Find and click Schedule button
-                    schedule_button = WebDriverWait(self.driver, 3).until(
+                    schedule_button = WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable((By.XPATH, method['selector']))
                     )
                     
                     print(f"      ✅ FOUND Schedule button with Method {method_num}!")
                     schedule_button.click()
-                    time.sleep(1)
+                    time.sleep(2)
                     
                     print(f"      🎉 SUCCESS! Schedule button clicked using Method {method_num}")
                     return True
+                    
+                except Exception as e:
+                    print(f"      ❌ Method {method_num} failed: {str(e)[:50]}...")
+                    continue
+            
+            if cycle < max_retry_cycles - 1:
+                print(f"   🔄 Cycle {cycle + 1} failed. Waiting 3 seconds before next cycle...")
+                time.sleep(3)
+        
+        # If all automated attempts failed, ask for manual approval
+        print("\n" + "="*60)
+        print("❌ COULD NOT FIND SCHEDULE BUTTON AUTOMATICALLY")
+        print("🔍 Please manually click the Schedule button in the browser")
+        print("⏰ You have 10 minutes to complete this action")
+        print("="*60)
+        
+        # Wait for manual approval (10 minutes = 600 seconds)
+        manual_success = self.wait_for_manual_schedule_approval(timeout=600)
+        
+        if manual_success:
+            print("✅ Manual scheduling detected - continuing with next video")
+            return True
+        else:
+            print("⏰ Manual approval timeout - refreshing page and restarting process")
+            self.driver.refresh()
+            time.sleep(5)
+            return False
+
+    def wait_for_manual_schedule_approval(self, timeout=600):
+        """Wait for user to manually click Schedule button."""
+        print(f"⏳ Waiting for manual Schedule button click (timeout: {timeout//60} minutes)...")
+        
+        start_time = time.time()
+        check_interval = 5  # Check every 5 seconds
+        
+        while time.time() - start_time < timeout:
+            try:
+                # Check if we're no longer on the scheduling page (indicates success)
+                current_url = self.driver.current_url
+                
+                # Look for success indicators
+                success_indicators = [
+                    "//div[contains(text(), 'scheduled')]",
+                    "//div[contains(text(), 'Your reel is safe to publish')]",
+                    "//*[contains(text(), 'success')]",
+                    "//span[text()='Create reel']"  # Back to main page
+                ]
+                
+                for indicator in success_indicators:
+                    try:
+                        element = self.driver.find_element(By.XPATH, indicator)
+                        if element.is_displayed():
+                            print(f"✅ Success indicator found: Manual scheduling completed!")
+                            return True
+                    except:
+                        continue
+                
+                # Show remaining time every 30 seconds
+                elapsed = int(time.time() - start_time)
+                remaining = timeout - elapsed
+                
+                if elapsed % 30 == 0 and elapsed > 0:
+                    print(f"⏳ Still waiting... {remaining//60} minutes {remaining%60} seconds remaining")
+                
+                time.sleep(check_interval)
+                
+            except Exception as e:
+                print(f"Error during manual approval wait: {e}")
+                time.sleep(check_interval)
+        
+        print("⏰ Manual approval timeout reached")
+        return False
+
+    def set_schedule_date(self, schedule_date):
+        """Set the schedule date using Ctrl+A and paste."""
+        try:
+            print(f"         🔄 Setting date to: {schedule_date.strftime('%d-%m-%Y')}")
+            
+            # Find date input field
+            date_input = self.wait.until(EC.element_to_be_clickable(
+                (By.XPATH, "//input[@type='date' or contains(@placeholder, 'date') or contains(@placeholder, 'mm/dd/yyyy')]")
+            ))
+            
+            # Click on date field
+            date_input.click()
+            time.sleep(0.5)
+            
+            # Select all and paste the date
+            formatted_date = schedule_date.strftime("%m/%d/%Y")  # MM/DD/YYYY format
+            pyperclip.copy(formatted_date)
+            send_keys("^a")  # Ctrl+A to select all
+            time.sleep(0.2)
+            send_keys("^v")  # Ctrl+V to paste
+            time.sleep(0.5)
+            
+            print(f"         ✅ Date set to: {formatted_date}")
+            return True
+            
+        except Exception as e:
+            print(f"         ❌ Failed to set date: {str(e)[:50]}...")
+            return False
+
+    def set_schedule_time(self, time_slot):
+        """Set the schedule time by clicking hour, minute, and AM/PM separately."""
+        try:
+            hour = time_slot["time"].split(":")[0]
+            minute = time_slot["time"].split(":")[1] 
+            period = time_slot["period"]
+            
+            print(f"         🔄 Setting time to: {hour}:{minute} {period}")
+            
+            # Method 1: Click hour, Tab twice to AM/PM, press A or P
+            try:
+                print(f"            🔍 Using Tab navigation method...")
+                
+                # Find and click hour field
+                hour_field = self.driver.find_element(By.XPATH, "//input[contains(@placeholder, 'hour') or contains(@aria-label, 'hour')]")
+                hour_field.click()
+                time.sleep(0.3)
+                
+                # Set hour
+                send_keys("^a")  # Select all
+                time.sleep(0.1)
+                pyperclip.copy(hour)
+                send_keys("^v")  # Paste hour
+                time.sleep(0.3)
+                print(f"            ✅ Hour set to: {hour}")
+                
+                # Press Tab twice to reach AM/PM field
+                print(f"            🔄 Pressing Tab twice to reach AM/PM...")
+                send_keys("{TAB}")  # Tab to minute field
+                time.sleep(0.2)
+                send_keys("{TAB}")  # Tab to AM/PM field
+                time.sleep(0.3)
+                
+                # Press A for AM or P for PM
+                if period == "AM":
+                    print(f"            🔄 Pressing 'A' for AM...")
+                    send_keys("a")
+                else:  # PM
+                    print(f"            🔄 Pressing 'P' for PM...")
+                    send_keys("p")
+                
+                time.sleep(0.3)
+                print(f"            ✅ Period set to: {period}")
+                return True
+                
+            except Exception as e1:
+                print(f"            ❌ Tab navigation method failed: {str(e1)[:30]}...")
+            
+            # Method 2: Try single time input field
+            try:
+                print(f"            🔍 Looking for single time input field...")
+                
+                time_input = self.driver.find_element(By.XPATH, "//input[contains(@placeholder, 'time') or contains(@placeholder, 'hh:mm')]")
+                time_input.click()
+                time.sleep(0.5)
+                
+                # Format time for input
+                formatted_time = f"{hour}:{minute} {period}"
+                pyperclip.copy(formatted_time)
+                send_keys("^a")
+                time.sleep(0.2)
+                send_keys("^v")
+                
+                print(f"            ✅ Time set to: {formatted_time}")
+                return True
+                
+            except Exception as e2:
+                print(f"            ❌ Single field method failed: {str(e2)[:30]}...")
+            
+            # Method 3: Try clicking on time elements by text
+            try:
+                print(f"            🔍 Looking for clickable time elements...")
+                
+                # Try to click on hour element
+                hour_element = self.driver.find_element(By.XPATH, f"//*[text()='{hour}' or contains(text(), '{hour}')]")
+                hour_element.click()
+                time.sleep(0.3)
+                
+                # Try to click on minute element  
+                minute_element = self.driver.find_element(By.XPATH, f"//*[text()='{minute}' or contains(text(), '{minute}')]")
+                minute_element.click()
+                time.sleep(0.3)
+                
+                # Try to click on AM/PM element
+                period_element = self.driver.find_element(By.XPATH, f"//*[text()='{period}']")
+                period_element.click()
+                
+                print(f"            ✅ Time set by clicking elements: {hour}:{minute} {period}")
+                return True
+                
+            except Exception as e3:
+                print(f"            ❌ Click elements method failed: {str(e3)[:30]}...")
+            
+            return False
+            
+        except Exception as e:
+            print(f"         ❌ Failed to set time: {str(e)[:50]}...")
+            return False
+
+    def click_final_schedule_button(self, max_attempts=3):
+        """Click the final blue Schedule button (span element)."""
+        final_schedule_methods = [
+            {
+                "name": "Div with descendant span containing Schedule",
+                "selector": "//div[descendant::span[text()='Schedule']]"
+            },
+            {
+                "name": "Parent div of Schedule span",
+                "selector": "//span[text()='Schedule']/parent::div"
+            },
+            {
+                "name": "Ancestor div of Schedule span (2 levels up)",
+                "selector": "//span[text()='Schedule']/ancestor::div[2]"
+            },
+            {
+                "name": "Clickable div with Schedule descendant",
+                "selector": "//div[@role='button'][descendant::*[text()='Schedule']]"
+            },
+            {
+                "name": "Any div containing Schedule text",
+                "selector": "//div[contains(., 'Schedule')]"
+            },
+            {
+                "name": "Span with Schedule text (direct click)",
+                "selector": "//span[text()='Schedule']"
+            },
+            {
+                "name": "Any clickable element with Schedule",
+                "selector": "//*[text()='Schedule' and (@onclick or @role='button' or contains(@class, 'click'))]"
+            },
+            {
+                "name": "Broad search for Schedule elements",
+                "selector": "//*[contains(text(), 'Schedule')]"
+            }
+        ]
+        
+        for attempt in range(max_attempts):
+            print(f"🔵 FINAL SCHEDULE BUTTON - Attempt {attempt + 1}/{max_attempts}")
+            
+            for i, method in enumerate(final_schedule_methods):
+                method_num = i + 1
+                print(f"   🔍 Method {method_num}: {method['name']}")
+                
+                try:
+                    # Find and click the final Schedule button
+                    final_button = WebDriverWait(self.driver, 3).until(
+                        EC.element_to_be_clickable((By.XPATH, method['selector']))
+                    )
+                    
+                    print(f"      ✅ FOUND final Schedule button with Method {method_num}!")
+                    
+                    # Forget Selenium - use PyWinAuto to actually click on "Schedule" text
+                    print(f"         🔄 Using PyWinAuto to click on Schedule text directly...")
+                    click_success = find_and_click_text("Schedule", timeout=5)
+                    
+                    if click_success:
+                        print(f"         ✅ PyWinAuto successfully clicked on Schedule text!")
+                    else:
+                        print(f"         ❌ PyWinAuto could not find Schedule text")
+                        continue
+                    
+                    print(f"      ⏳ Click executed! Waiting 10 seconds for Meta Business Suite to process...")
+                    time.sleep(10)
+                    
+                    # Verify that scheduling actually worked
+                    if self.verify_scheduling_success():
+                        print(f"      🎉 SUCCESS! Video actually scheduled using Method {method_num}")
+                        return True
+                    else:
+                        print(f"      ❌ Button was clicked but scheduling failed with Method {method_num}")
+                        print(f"      🔍 DEBUG: Current URL: {self.driver.current_url}")
+                        continue
                     
                 except Exception as e:
                     print(f"      ❌ Method {method_num} failed: {str(e)[:50]}...")
@@ -619,8 +909,67 @@ class FacebookBot:
                 print(f"   🔄 All methods failed. Waiting 1 second before retry...")
                 time.sleep(1)
         
-        print("❌ SCHEDULE BUTTON FAILED - Could not click Schedule button after all attempts")
+        print("❌ FINAL SCHEDULE BUTTON FAILED - Could not click final Schedule button after all attempts")
         return False
+
+    def verify_scheduling_success(self):
+        """Verify that the video was actually scheduled successfully."""
+        try:
+            print(f"         🔍 Verifying scheduling success...")
+            
+            # First check: Are we still on the same scheduling page?
+            current_url = self.driver.current_url
+            print(f"         📍 Current URL: {current_url}")
+            
+            # Look for specific success indicators
+            success_indicators = [
+                "//div[contains(text(), 'scheduled')]",
+                "//div[contains(text(), 'Your reel is safe to publish')]", 
+                "//div[contains(text(), 'Scheduled successfully')]",
+                "//span[text()='Create reel']",
+                "//*[text()='Add Video']"
+            ]
+            
+            found_indicators = []
+            for indicator in success_indicators:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, indicator)
+                    visible_elements = [el for el in elements if el.is_displayed()]
+                    if visible_elements:
+                        found_indicators.append(indicator)
+                        print(f"         ✅ Found: {indicator}")
+                except:
+                    continue
+            
+            if found_indicators:
+                print(f"         🎉 Found {len(found_indicators)} success indicators!")
+                return True
+            
+            # Check if the Schedule button is still there (means we didn't move forward)
+            try:
+                still_schedule = self.driver.find_elements(By.XPATH, "//span[text()='Schedule']")
+                if still_schedule:
+                    print(f"         ❌ Schedule button still present - click probably didn't work")
+                    return False
+            except:
+                pass
+            
+            # Check page title or other indicators
+            try:
+                page_title = self.driver.title
+                print(f"         📄 Page title: {page_title}")
+                if "reel" in page_title.lower() and "schedule" not in page_title.lower():
+                    print(f"         ✅ Page title suggests we moved away from scheduling")
+                    return True
+            except:
+                pass
+            
+            print(f"         ❌ No clear success indicators found")
+            return False
+            
+        except Exception as e:
+            print(f"         ❌ Error verifying scheduling success: {str(e)[:50]}...")
+            return False
 
     def upload_video_file(self, video_path, is_first_video=False):
         """Upload a video file using the web-based file picker with verification."""
@@ -1143,7 +1492,7 @@ class FacebookBot:
 
 
 
-    def schedule_single_reel(self, caption, schedule_date, schedule_time):
+    def schedule_single_reel(self, caption, schedule_date, time_slot):
         """Schedule a single reel following the exact flow: Caption -> Share -> Schedule -> Final Share."""
         try:
             # Wait for video to process
@@ -1164,69 +1513,36 @@ class FacebookBot:
                 print("❌ Failed to click Share button after all attempts")
                 return False
 
-            # Step 3: Click Schedule button/option
+            # Step 3: Click Schedule button/option with retry and manual approval
             print("Step 3: Clicking Schedule button...")
-            schedule_success = self.click_schedule_button()
+            schedule_success = self.click_schedule_button_with_manual_approval()
             if not schedule_success:
-                print("❌ Failed to click Schedule button")
+                print("❌ Failed to click Schedule button after all attempts")
                 return False
 
             # Step 4: Set date
             print("Step 4: Setting date...")
-            try:
-                date_input = self.wait.until(EC.element_to_be_clickable(
-                    (By.XPATH, "//input[@type='date' or contains(@placeholder, 'date') or contains(@placeholder, 'mm/dd/yyyy')]")
-                ))
-                date_input.click()
-                date_input.clear()
-                date_input.send_keys(schedule_date.strftime("%m/%d/%Y"))
-                print(f"✅ Date set to {schedule_date.strftime('%m/%d/%Y')}")
-                time.sleep(1)
-            except Exception as e:
-                print(f"❌ Could not set date: {e}")
+            date_success = self.set_schedule_date(schedule_date)
+            if not date_success:
+                print("❌ Failed to set date")
                 return False
 
             # Step 5: Set time
             print("Step 5: Setting time...")
-            try:
-                time_input = self.wait.until(EC.element_to_be_clickable(
-                    (By.XPATH, "//input[contains(@placeholder, 'time') or contains(@placeholder, 'hh:mm')]")
-                ))
-                time_input.clear()
-                time_input.send_keys(schedule_time)
-                print(f"✅ Time set to {schedule_time}")
-                time.sleep(1)
-            except Exception as e:
-                print(f"❌ Could not set time: {e}")
+            time_success = self.set_schedule_time(time_slot)
+            if not time_success:
+                print("❌ Failed to set time")
                 return False
 
-            # Step 6: Click final Schedule/Share button to actually schedule the video
-            print("Step 6: Clicking final Schedule button to complete scheduling...")
-            try:
-                final_schedule_selectors = [
-                    "//button[contains(text(), 'Schedule')]",
-                    "//div[@aria-label='Schedule' and @role='button']",
-                    "//button[@aria-label='Schedule']",
-                    "//span[text()='Schedule']/parent::button",
-                    "//*[contains(text(), 'Schedule') and (@role='button' or @type='button')]"
-                ]
-                
-                for selector in final_schedule_selectors:
-                    try:
-                        final_button = self.wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                        final_button.click()
-                        print("✅ Final Schedule button clicked - Reel scheduled successfully!")
-                        time.sleep(2)
-                        return True
-                    except:
-                        continue
-                
-                print("❌ Could not find final Schedule button")
+            # Step 6: Click the final blue Schedule button (span element)
+            print("Step 6: Clicking final blue Schedule button...")
+            final_success = self.click_final_schedule_button()
+            if not final_success:
+                print("❌ Failed to click final Schedule button")
                 return False
-                
-            except Exception as e:
-                print(f"❌ Could not click final Schedule button: {e}")
-                return False
+            
+            print("🎉 Reel scheduled successfully!")
+            return True
 
         except Exception as e:
             logging.error(f"Error scheduling reel: {e}")
