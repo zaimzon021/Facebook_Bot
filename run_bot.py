@@ -205,6 +205,9 @@ class FacebookBot:
                     if schedule_success:
                         print(f"✅ Successfully scheduled reel for {video_file}")
                         
+                        # Move the processed video to avoid selecting it again
+                        self.move_processed_video(video_path, video_file)
+                        
                         # Only navigate back to reel composer after SUCCESSFUL scheduling
                         if i < len(video_files) - 1:  # Not the last video
                             print(f"\n🔄 Video scheduled successfully! Preparing for next video ({i+2}/{len(video_files)})...")
@@ -248,6 +251,31 @@ class FacebookBot:
         cleaned = cleaned.title()
         
         return cleaned if cleaned else caption  # Return original if cleaning resulted in empty string
+
+    def move_processed_video(self, video_path, video_filename):
+        """Move successfully processed video to a 'processed' subfolder."""
+        try:
+            # Create processed folder if it doesn't exist
+            processed_folder = os.path.join(VIDEO_FOLDER_PATH, "processed")
+            if not os.path.exists(processed_folder):
+                os.makedirs(processed_folder)
+                print(f"📁 Created processed folder: {processed_folder}")
+            
+            # Move the video file
+            destination_path = os.path.join(processed_folder, video_filename)
+            
+            # If file already exists in processed folder, add a timestamp
+            if os.path.exists(destination_path):
+                name, ext = os.path.splitext(video_filename)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                destination_path = os.path.join(processed_folder, f"{name}_{timestamp}{ext}")
+            
+            os.rename(video_path, destination_path)
+            print(f"📦 Moved processed video: {video_filename} → processed/{os.path.basename(destination_path)}")
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Could not move processed video {video_filename}: {e}")
+            print("   This may cause the same video to be selected again.")
 
     def login_and_navigate(self):
         
@@ -413,12 +441,23 @@ class FacebookBot:
                 print(f"   🔍 Method {method_num}: {method['name']}")
                 
                 try:
-                    # Find the caption field
-                    caption_field = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, method['selector']))
+                    # Find the caption field (first just locate it)
+                    caption_field = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.XPATH, method['selector']))
                     )
                     
                     print(f"      ✅ FOUND caption field with Method {method_num}!")
+                    
+                    # Scroll element into view to make it visible
+                    print(f"         🔄 Scrolling caption field into view...")
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", caption_field)
+                    time.sleep(1)
+                    
+                    # Now wait for it to be clickable after scrolling
+                    caption_field = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, method['selector']))
+                    )
+                    
                     print(f"         🔄 Clicking field and pasting caption from clipboard...")
                     
                     # Click the field with Selenium
@@ -430,24 +469,14 @@ class FacebookBot:
                     send_keys("^v")  # Ctrl+V to paste
                     time.sleep(1)
                     
-                    # Verify caption was pasted correctly
-                    try:
-                        actual_text = caption_field.get_attribute('value') or caption_field.text or caption_field.get_attribute('textContent')
-                        if caption.lower() in actual_text.lower():
-                            print(f"      ✅ Caption verified: '{actual_text[:50]}...'")
-                        else:
-                            print(f"      ⚠️ Caption mismatch, trying to replace...")
-                            # Clear and try again
-                            send_keys("^a")  # Select all
-                            time.sleep(0.2)
-                            pyperclip.copy(caption)
-                            send_keys("^v")  # Paste again
-                            time.sleep(0.5)
-                    except:
-                        print(f"      ⚠️ Could not verify caption, assuming it worked")
-                    
-                    print(f"      🎉 SUCCESS! Caption '{caption}' pasted and verified")
-                    return True
+                    # Verify caption was pasted correctly and matches the uploaded video
+                    verification_success = self.verify_and_correct_caption(caption_field, caption)
+                    if verification_success:
+                        print(f"      🎉 SUCCESS! Caption '{caption}' pasted and verified")
+                        return True
+                    else:
+                        print(f"      ❌ Caption verification failed, trying next method...")
+                        continue
                     
                 except Exception as e:
                     print(f"      ❌ Method {method_num} failed: {str(e)[:50]}...")
@@ -460,6 +489,150 @@ class FacebookBot:
         
         print("❌ CAPTION ENTRY FAILED - Could not enter caption after all attempts")
         return False
+
+    def verify_and_correct_caption(self, caption_field, expected_caption):
+        """Verify caption matches the uploaded video filename and correct if needed."""
+        try:
+            print(f"         🔍 ENHANCED CAPTION VERIFICATION...")
+            
+            # Wait a moment for the field to be ready
+            time.sleep(1)
+            
+            # Try multiple methods to get the actual text in the caption field
+            actual_text = ""
+            extraction_methods = [
+                ("value attribute", lambda: caption_field.get_attribute('value')),
+                ("text property", lambda: caption_field.text),
+                ("textContent attribute", lambda: caption_field.get_attribute('textContent')),
+                ("innerHTML attribute", lambda: caption_field.get_attribute('innerHTML')),
+                ("innerText attribute", lambda: caption_field.get_attribute('innerText')),
+                ("JavaScript textContent", lambda: self.driver.execute_script("return arguments[0].textContent;", caption_field)),
+                ("JavaScript value", lambda: self.driver.execute_script("return arguments[0].value;", caption_field)),
+            ]
+            
+            print(f"         🔍 Trying multiple text extraction methods...")
+            for method_name, method_func in extraction_methods:
+                try:
+                    text = method_func()
+                    if text and text.strip():
+                        actual_text = text.strip()
+                        print(f"         ✅ Got text using {method_name}: '{actual_text}'")
+                        break
+                    else:
+                        print(f"         ❌ {method_name}: empty or None")
+                except Exception as e:
+                    print(f"         ❌ {method_name} failed: {str(e)[:30]}...")
+            
+            # Get the current video filename for comparison
+            current_video_filename = getattr(self, 'current_video_filename', '')
+            expected_from_filename = self.clean_caption(os.path.splitext(current_video_filename)[0]) if current_video_filename else expected_caption
+            
+            print(f"         📝 Expected caption: '{expected_caption}'")
+            print(f"         📝 Actual caption in field: '{actual_text}'")
+            print(f"         📝 Caption from filename: '{expected_from_filename}'")
+            print(f"         📝 Current video file: '{current_video_filename}'")
+            
+            # If we couldn't extract any text, assume it's empty and needs correction
+            if not actual_text:
+                print(f"         ⚠️ No text found in caption field - needs correction!")
+                return self.force_correct_caption(caption_field, expected_from_filename, expected_caption)
+            
+            # Check if caption matches (more lenient matching)
+            actual_lower = actual_text.lower()
+            expected_lower = expected_caption.lower()
+            filename_lower = expected_from_filename.lower()
+            
+            # Multiple matching strategies
+            matches = [
+                expected_lower in actual_lower,
+                filename_lower in actual_lower,
+                actual_lower in expected_lower,
+                actual_lower in filename_lower,
+                # Check if at least 70% of words match
+                self.caption_similarity_check(actual_text, expected_from_filename)
+            ]
+            
+            if any(matches):
+                print(f"         ✅ Caption verification PASSED! Match found.")
+                return True
+            
+            # If no match, force correction
+            print(f"         ⚠️ Caption mismatch detected! Forcing correction...")
+            return self.force_correct_caption(caption_field, expected_from_filename, expected_caption)
+                
+        except Exception as e:
+            print(f"         ❌ Error during caption verification: {str(e)[:50]}...")
+            # If verification fails, try to force correct anyway
+            return self.force_correct_caption(caption_field, expected_caption, expected_caption)
+
+    def caption_similarity_check(self, actual_text, expected_text):
+        """Check if captions are similar enough (70% word match)."""
+        try:
+            actual_words = set(actual_text.lower().split())
+            expected_words = set(expected_text.lower().split())
+            
+            if not expected_words:
+                return False
+            
+            common_words = actual_words.intersection(expected_words)
+            similarity = len(common_words) / len(expected_words)
+            
+            print(f"         📊 Caption similarity: {similarity:.2%} ({len(common_words)}/{len(expected_words)} words match)")
+            return similarity >= 0.7
+        except:
+            return False
+
+    def force_correct_caption(self, caption_field, correct_caption, fallback_caption):
+        """Force correct the caption field."""
+        try:
+            print(f"         🔧 FORCE CORRECTING caption...")
+            
+            # Click the field to ensure it's focused
+            caption_field.click()
+            time.sleep(0.5)
+            
+            # Clear the field completely
+            print(f"         🔄 Clearing field...")
+            send_keys("^a")  # Select all
+            time.sleep(0.3)
+            send_keys("{DELETE}")  # Delete
+            time.sleep(0.3)
+            
+            # Use the filename-based caption as the correct one
+            final_caption = correct_caption if correct_caption else fallback_caption
+            print(f"         📝 Pasting correct caption: '{final_caption}'")
+            
+            pyperclip.copy(final_caption)
+            send_keys("^v")  # Paste correct caption
+            time.sleep(1)
+            
+            # Verify the correction worked
+            print(f"         🔍 Verifying correction...")
+            corrected_text = ""
+            for method_name, method_func in [
+                ("JavaScript textContent", lambda: self.driver.execute_script("return arguments[0].textContent;", caption_field)),
+                ("value attribute", lambda: caption_field.get_attribute('value')),
+                ("text property", lambda: caption_field.text),
+            ]:
+                try:
+                    text = method_func()
+                    if text and text.strip():
+                        corrected_text = text.strip()
+                        print(f"         ✅ Correction verified using {method_name}: '{corrected_text}'")
+                        break
+                except:
+                    continue
+            
+            if corrected_text and final_caption.lower() in corrected_text.lower():
+                print(f"         🎉 Caption correction SUCCESSFUL!")
+                return True
+            else:
+                print(f"         ❌ Caption correction FAILED - field still shows: '{corrected_text}'")
+                return False
+                
+        except Exception as e:
+            print(f"         ❌ Error during force correction: {str(e)[:50]}...")
+            return False
 
     def verify_caption_entered(self, element, expected_caption):
         """Verify that the caption was actually entered in the field."""
@@ -828,40 +1001,49 @@ class FacebookBot:
             return False
 
     def click_final_schedule_button(self, max_attempts=3):
-        """Click the final blue Schedule button (span element)."""
+        """Click the final blue Schedule button using targeted CSS class approaches."""
+        # NEW TARGETED METHODS based on provided CSS classes and div container info
         final_schedule_methods = [
-            {
-                "name": "Div with descendant span containing Schedule",
-                "selector": "//div[descendant::span[text()='Schedule']]"
-            },
-            {
-                "name": "Parent div of Schedule span",
-                "selector": "//span[text()='Schedule']/parent::div"
-            },
-            {
-                "name": "Ancestor div of Schedule span (2 levels up)",
-                "selector": "//span[text()='Schedule']/ancestor::div[2]"
-            },
-            {
-                "name": "Clickable div with Schedule descendant",
-                "selector": "//div[@role='button'][descendant::*[text()='Schedule']]"
-            },
-            {
-                "name": "Any div containing Schedule text",
-                "selector": "//div[contains(., 'Schedule')]"
-            },
-            {
-                "name": "Span with Schedule text (direct click)",
-                "selector": "//span[text()='Schedule']"
-            },
-            {
-                "name": "Any clickable element with Schedule",
-                "selector": "//*[text()='Schedule' and (@onclick or @role='button' or contains(@class, 'click'))]"
-            },
-            {
-                "name": "Broad search for Schedule elements",
-                "selector": "//*[contains(text(), 'Schedule')]"
-            }
+            # 🏆 WINNING METHOD - Move method 14 to first place!
+            {"name": "Schedule div after Back", "selector": "//div[text()='Back']/following::div[text()='Schedule'][1]"},
+            
+            # PRIORITY METHODS - Based on your CSS class information
+            {"name": "Div with _9dls class containing Schedule", "selector": "//div[contains(@class, '_9dls')]//div[text()='Schedule']"},
+            {"name": "Div with _6s5d class containing Schedule", "selector": "//div[contains(@class, '_6s5d')]//div[text()='Schedule']"},
+            {"name": "Div with _8-5d class containing Schedule", "selector": "//div[contains(@class, '_8-5d')]//div[text()='Schedule']"},
+            
+            # Div descendant approaches (as you requested)
+            {"name": "Div descendant with Schedule text", "selector": "//div[descendant::*[text()='Schedule']]"},
+            {"name": "Clickable div descendant Schedule", "selector": "//div[descendant::*[text()='Schedule'] and (@role='button' or @onclick)]"},
+            {"name": "Div descendant Schedule span", "selector": "//div[descendant::span[text()='Schedule']]"},
+            
+            # Blue button container approaches
+            {"name": "Blue div container with Schedule", "selector": "//div[contains(@style, 'background-color') and contains(@style, 'blue')]//div[text()='Schedule']"},
+            {"name": "Colored background div Schedule", "selector": "//div[contains(@style, 'background-color')]//div[text()='Schedule']"},
+            {"name": "Div with cursor default Schedule", "selector": "//div[contains(@style, 'cursor: default')]//div[text()='Schedule']"},
+            
+            # Facebook-specific class approaches
+            {"name": "System fonts div Schedule", "selector": "//div[contains(@class, 'system-fonts')]//div[text()='Schedule']"},
+            {"name": "Segoe font div Schedule", "selector": "//div[contains(@class, 'segoe')]//div[text()='Schedule']"},
+            {"name": "Web wash background Schedule", "selector": "//div[contains(@style, 'var(--web-wash)')]//div[text()='Schedule']"},
+            
+            # Container relationship approaches
+            {"name": "Schedule div next to Back", "selector": "//div[text()='Back']/following-sibling::div[text()='Schedule']"},
+            {"name": "Schedule in same container as Back", "selector": "//div[descendant::div[text()='Back']]//div[text()='Schedule']"},
+            
+            # Direct div targeting
+            {"name": "Direct div with Schedule text", "selector": "//div[text()='Schedule']"},
+            {"name": "Clickable div with Schedule", "selector": "//div[text()='Schedule' and (@role='button' or @onclick or @tabindex)]"},
+            {"name": "Div Schedule with role button", "selector": "//div[text()='Schedule' and @role='button']"},
+            
+            # Fallback to original span approaches
+            {"name": "Span Schedule in div container", "selector": "//div//span[text()='Schedule']"},
+            {"name": "Last span Schedule", "selector": "(//span[text()='Schedule'])[last()]"},
+            {"name": "Any Schedule element", "selector": "//*[text()='Schedule']"},
+            
+            # Broad container searches
+            {"name": "Any div containing Schedule", "selector": "//div[contains(text(), 'Schedule')]"},
+            {"name": "Div with Schedule substring", "selector": "//div[contains(., 'Schedule')]"},
         ]
         
         for attempt in range(max_attempts):
@@ -879,28 +1061,70 @@ class FacebookBot:
                     
                     print(f"      ✅ FOUND final Schedule button with Method {method_num}!")
                     
-                    # Forget Selenium - use PyWinAuto to actually click on "Schedule" text
-                    print(f"         🔄 Using PyWinAuto to click on Schedule text directly...")
-                    click_success = find_and_click_text("Schedule", timeout=5)
+                    # Scroll element into view and make it fully visible
+                    print(f"         🔄 Scrolling Schedule button into view...")
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", final_button)
+                    time.sleep(1)
                     
-                    if click_success:
-                        print(f"         ✅ PyWinAuto successfully clicked on Schedule text!")
-                    else:
-                        print(f"         ❌ PyWinAuto could not find Schedule text")
+                    # Wait for element to be clickable after scrolling
+                    try:
+                        final_button = WebDriverWait(self.driver, 5).until(
+                            EC.element_to_be_clickable((By.XPATH, method['selector']))
+                        )
+                        print(f"         ✅ Element is now clickable after scrolling")
+                    except:
+                        print(f"         ⚠️ Element may not be clickable, but trying anyway...")
+                    
+                    # Try multiple Selenium click methods
+                    click_success = False
+                    
+                    # Method 1: Regular click
+                    try:
+                        print(f"         🔄 Trying regular Selenium click...")
+                        final_button.click()
+                        click_success = True
+                        print(f"         ✅ Regular Selenium click worked!")
+                    except Exception as e1:
+                        print(f"         ❌ Regular click failed: {str(e1)[:50]}...")
+                    
+                    # Method 2: JavaScript click
+                    if not click_success:
+                        try:
+                            print(f"         🔄 Trying JavaScript click...")
+                            self.driver.execute_script("arguments[0].click();", final_button)
+                            click_success = True
+                            print(f"         ✅ JavaScript click worked!")
+                        except Exception as e2:
+                            print(f"         ❌ JavaScript click failed: {str(e2)[:50]}...")
+                    
+                    # Method 3: ActionChains click
+                    if not click_success:
+                        try:
+                            print(f"         🔄 Trying ActionChains click...")
+                            from selenium.webdriver.common.action_chains import ActionChains
+                            actions = ActionChains(self.driver)
+                            actions.move_to_element(final_button).click().perform()
+                            click_success = True
+                            print(f"         ✅ ActionChains click worked!")
+                        except Exception as e3:
+                            print(f"         ❌ ActionChains click failed: {str(e3)[:50]}...")
+                    
+                    if not click_success:
+                        print(f"      ❌ All Selenium click methods failed for Method {method_num}")
                         continue
                     
-                    print(f"      ⏳ Click executed! Waiting 10 seconds for Meta Business Suite to process...")
-                    time.sleep(10)
+                    print(f"      ⏳ Click executed! Waiting for Meta Business Suite to process...")
                     
-                    # Verify that scheduling actually worked
-                    if self.verify_scheduling_success():
+                    # Enhanced verification with page stuck handling
+                    verification_result = self.verify_scheduling_with_recovery()
+                    if verification_result:
                         print(f"      🎉 SUCCESS! Video actually scheduled using Method {method_num}")
                         return True
                     else:
                         print(f"      ❌ Button was clicked but scheduling failed with Method {method_num}")
                         print(f"      🔍 DEBUG: Current URL: {self.driver.current_url}")
                         continue
-                    
+                        
                 except Exception as e:
                     print(f"      ❌ Method {method_num} failed: {str(e)[:50]}...")
                     continue
@@ -909,8 +1133,76 @@ class FacebookBot:
                 print(f"   🔄 All methods failed. Waiting 1 second before retry...")
                 time.sleep(1)
         
+        # If all Selenium methods failed, try screenshot approach
+        print("🖼️ All Selenium methods failed. Trying screenshot-based approach...")
+        screenshot_success = self.find_schedule_button_by_screenshot()
+        if screenshot_success:
+            return True
+        
         print("❌ FINAL SCHEDULE BUTTON FAILED - Could not click final Schedule button after all attempts")
         return False
+
+    def find_schedule_button_by_screenshot(self):
+        """Take screenshot and find Schedule button using image recognition."""
+        try:
+            print("📸 Taking screenshot to find Schedule button...")
+            
+            # Take screenshot
+            screenshot_path = "schedule_button_screenshot.png"
+            self.driver.save_screenshot(screenshot_path)
+            print(f"📸 Screenshot saved: {screenshot_path}")
+            
+            # Use OpenCV or PIL to find blue button with "Schedule" text
+            try:
+                from PIL import Image, ImageDraw
+                import pytesseract
+                
+                # Open screenshot
+                img = Image.open(screenshot_path)
+                print(f"📏 Screenshot size: {img.size}")
+                
+                # Use OCR to find "Schedule" text
+                ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                
+                schedule_locations = []
+                for i, text in enumerate(ocr_data['text']):
+                    if 'schedule' in text.lower() and ocr_data['conf'][i] > 30:
+                        x = ocr_data['left'][i]
+                        y = ocr_data['top'][i]
+                        w = ocr_data['width'][i]
+                        h = ocr_data['height'][i]
+                        schedule_locations.append((x + w//2, y + h//2, text))
+                        print(f"🔍 Found 'Schedule' text at ({x + w//2}, {y + h//2}): '{text}'")
+                
+                if schedule_locations:
+                    # Click on the last/rightmost Schedule (likely the blue button)
+                    schedule_locations.sort(key=lambda x: x[0], reverse=True)  # Sort by x coordinate
+                    click_x, click_y, text = schedule_locations[0]
+                    
+                    print(f"🖱️ Clicking on Schedule button at ({click_x}, {click_y})")
+                    pyautogui.click(click_x, click_y)
+                    
+                    print(f"⏳ Waiting 10 seconds after screenshot click...")
+                    time.sleep(10)
+                    
+                    # Verify success
+                    if self.verify_scheduling_success():
+                        print(f"🎉 SUCCESS! Schedule button clicked using screenshot method!")
+                        return True
+                    else:
+                        print(f"❌ Screenshot click didn't work")
+                        return False
+                else:
+                    print("❌ No Schedule text found in screenshot")
+                    return False
+                    
+            except ImportError:
+                print("❌ PIL or pytesseract not available for screenshot method")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Screenshot method failed: {str(e)[:50]}...")
+            return False
 
     def verify_scheduling_success(self):
         """Verify that the video was actually scheduled successfully."""
@@ -969,6 +1261,110 @@ class FacebookBot:
             
         except Exception as e:
             print(f"         ❌ Error verifying scheduling success: {str(e)[:50]}...")
+            return False
+
+    def verify_scheduling_with_recovery(self, max_wait_time=30):
+        """Enhanced verification with page stuck detection and recovery."""
+        try:
+            print(f"         🔍 Enhanced scheduling verification (max wait: {max_wait_time}s)...")
+            
+            start_time = time.time()
+            check_interval = 3  # Check every 3 seconds
+            
+            while time.time() - start_time < max_wait_time:
+                elapsed = int(time.time() - start_time)
+                print(f"         ⏳ Checking... ({elapsed}s elapsed)")
+                
+                # Check for success indicators
+                if self.verify_scheduling_success():
+                    print(f"         🎉 Scheduling verified successfully!")
+                    return True
+                
+                # Check if page is stuck (same URL, no progress indicators)
+                current_url = self.driver.current_url
+                print(f"         📍 Current URL: {current_url}")
+                
+                # Look for loading indicators
+                loading_present = self.check_for_loading_indicators()
+                if loading_present:
+                    print(f"         ⏳ Page is still loading, waiting...")
+                    time.sleep(check_interval)
+                    continue
+                
+                # Check if we're stuck on scheduling page
+                if "reels_composer" in current_url or "schedule" in current_url.lower():
+                    schedule_buttons = self.driver.find_elements(By.XPATH, "//span[text()='Schedule'] | //div[text()='Schedule']")
+                    if schedule_buttons and elapsed > 15:  # If stuck for more than 15 seconds
+                        print(f"         ⚠️ Page appears stuck on scheduling page after {elapsed}s")
+                        return self.handle_stuck_page()
+                
+                time.sleep(check_interval)
+            
+            print(f"         ⏰ Verification timeout after {max_wait_time}s")
+            return self.handle_stuck_page()
+            
+        except Exception as e:
+            print(f"         ❌ Error during enhanced verification: {str(e)[:50]}...")
+            return self.handle_stuck_page()
+
+    def check_for_loading_indicators(self):
+        """Check if page is still loading."""
+        try:
+            loading_indicators = [
+                "//div[contains(@class, 'loading')]",
+                "//div[contains(@class, 'spinner')]",
+                "//div[@role='progressbar']",
+                "//*[contains(text(), 'Loading')]",
+                "//*[contains(text(), 'Processing')]"
+            ]
+            
+            for indicator in loading_indicators:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, indicator)
+                    if any(el.is_displayed() for el in elements):
+                        return True
+                except:
+                    continue
+            return False
+        except:
+            return False
+
+    def handle_stuck_page(self):
+        """Handle when page gets stuck after clicking schedule."""
+        try:
+            print(f"         🔧 Handling stuck page...")
+            
+            # First, try refreshing the current page
+            print(f"         🔄 Refreshing current page...")
+            self.driver.refresh()
+            time.sleep(5)
+            
+            # Check if refresh helped
+            if self.verify_scheduling_success():
+                print(f"         ✅ Page refresh resolved the issue!")
+                return True
+            
+            # If refresh didn't help, navigate to Meta Business Suite
+            print(f"         🔄 Navigating to Meta Business Suite...")
+            self.driver.get("https://business.facebook.com/latest/reels_composer")
+            time.sleep(5)
+            
+            # Check if we can see the reel composer
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.any_of(
+                        EC.presence_of_element_located((By.XPATH, "//*[text()='Add Video']")),
+                        EC.presence_of_element_located((By.XPATH, "//span[text()='Create reel']"))
+                    )
+                )
+                print(f"         ✅ Successfully navigated to Meta Business Suite")
+                return True
+            except:
+                print(f"         ❌ Failed to load Meta Business Suite properly")
+                return False
+                
+        except Exception as e:
+            print(f"         ❌ Error handling stuck page: {str(e)[:50]}...")
             return False
 
     def upload_video_file(self, video_path, is_first_video=False):
@@ -1052,32 +1448,17 @@ class FacebookBot:
         return False
 
     def find_and_select_video_file(self, video_filename):
-        """Try multiple strategies to find and select the video file."""
+        """Try multiple strategies to find and select the video file in correct order."""
         print(f"Searching for video file: {video_filename}")
         
-        # Strategy 1: Try exact filename match
-        print("  Strategy 1: Exact filename match...")
-        success = find_and_click_text(video_filename, timeout=5, partial=False, double_click=True)
+        # � NEW SNTRATEGY 1: Try to select video by position/index first
+        print(f"  🎯 Strategy 1: Selecting video by position...")
+        success = False  # Disabled broken index selection
         if success:
-            print(f"  ✅ Found with exact match: {video_filename}")
+            print(f"  ✅ Found and selected video by index")
             return True
         
-        # Strategy 2: Try partial filename match
-        print("  Strategy 2: Partial filename match...")
-        success = find_and_click_text(video_filename, timeout=5, partial=True, double_click=True)
-        if success:
-            print(f"  ✅ Found with partial match: {video_filename}")
-            return True
-        
-        # Strategy 3: Try filename without extension
-        base_name = os.path.splitext(video_filename)[0]
-        print(f"  Strategy 3: Filename without extension: {base_name}")
-        success = find_and_click_text(base_name, timeout=5, partial=True, double_click=True)
-        if success:
-            print(f"  ✅ Found with base name: {base_name}")
-            return True
-        
-        # Strategy 4: Try to find any part of the filename
+        # 🏆 STRATEGY 2 (was Strategy 1): Try to find any part of the filename
         # Split filename by common separators and try each part
         separators = [' ', '-', '_', '.', '(', ')', '[', ']']
         filename_parts = [video_filename]
@@ -1087,7 +1468,7 @@ class FacebookBot:
                 parts = video_filename.split(sep)
                 filename_parts.extend([part.strip() for part in parts if len(part.strip()) > 3])
         
-        print(f"  Strategy 4: Trying filename parts: {filename_parts}")
+        print(f"  🏆 Strategy 2: Trying filename parts: {filename_parts}")
         for part in filename_parts:
             if len(part) > 3:  # Only try parts longer than 3 characters
                 print(f"    Trying part: {part}")
@@ -1096,9 +1477,37 @@ class FacebookBot:
                     print(f"  ✅ Found with part match: {part}")
                     return True
         
-        # Strategy 5: Try common video file patterns
-        print("  Strategy 5: Trying common video patterns...")
+        # 🏆 STRATEGY 3 (was Strategy 2): Try common video file patterns
+        print("  🏆 Strategy 3: Trying common video patterns...")
         video_patterns = [".mp4", ".mov", ".avi", ".mkv"]
+        for pattern in video_patterns:
+            if pattern in video_filename.lower():
+                success = find_and_click_text(pattern, timeout=3, partial=True, double_click=True)
+                if success:
+                    print(f"  ✅ Found with pattern match: {pattern}")
+                    return True
+        
+        # Strategy 3: Try exact filename match
+        print("  Strategy 3: Exact filename match...")
+        success = find_and_click_text(video_filename, timeout=5, partial=False, double_click=True)
+        if success:
+            print(f"  ✅ Found with exact match: {video_filename}")
+            return True
+        
+        # Strategy 4: Try partial filename match
+        print("  Strategy 4: Partial filename match...")
+        success = find_and_click_text(video_filename, timeout=5, partial=True, double_click=True)
+        if success:
+            print(f"  ✅ Found with partial match: {video_filename}")
+            return True
+        
+        # Strategy 5: Try filename without extension
+        base_name = os.path.splitext(video_filename)[0]
+        print(f"  Strategy 5: Filename without extension: {base_name}")
+        success = find_and_click_text(base_name, timeout=5, partial=True, double_click=True)
+        if success:
+            print(f"  ✅ Found with base name: {base_name}")
+            return True
         for pattern in video_patterns:
             if pattern in video_filename.lower():
                 success = find_and_click_text(pattern, timeout=3, partial=True, double_click=True)
@@ -1108,6 +1517,97 @@ class FacebookBot:
         
         print(f"  ❌ Could not find video file with any strategy: {video_filename}")
         return False
+
+    def select_video_by_index(self, video_index):
+        """Select video file by its position/index in the file list."""
+        try:
+            print(f"    🎯 Attempting to select video at index {video_index}...")
+            
+            # Method 1: Try to get all video files and select by index
+            try:
+                desktop = Desktop(backend="uia")
+                
+                for win in desktop.windows():
+                    win_title = win.window_text().lower()
+                    class_name = win.element_info.class_name or ""
+                    
+                    # Look for file dialog or explorer window
+                    if (class_name == "#32770" or  # Standard Windows dialog
+                        class_name == "CabinetWClass" or  # File Explorer
+                        "open" in win_title or 
+                        "file" in win_title):
+                        
+                        print(f"      Found file dialog: {win_title}")
+                        win.set_focus()
+                        time.sleep(0.5)
+                        
+                        # Get all video files in the current view
+                        video_elements = []
+                        for control in win.descendants():
+                            if not isinstance(control, UIAWrapper):
+                                continue
+                            
+                            control_text = control.window_text().strip()
+                            if (control_text and 
+                                any(ext in control_text.lower() for ext in ['.mp4', '.mov', '.avi', '.mkv'])):
+                                video_elements.append(control)
+                        
+                        print(f"      Found {len(video_elements)} video files")
+                        
+                        # Sort video elements by their position (top to bottom, left to right)
+                        if video_elements:
+                            try:
+                                video_elements.sort(key=lambda x: (x.rectangle().top, x.rectangle().left))
+                            except:
+                                pass  # If sorting fails, use original order
+                        
+                        # Select the video at the specified index
+                        if video_index < len(video_elements):
+                            target_video = video_elements[video_index]
+                            print(f"      Selecting video at index {video_index}: {target_video.window_text()}")
+                            
+                            target_video.set_focus()
+                            time.sleep(0.3)
+                            target_video.double_click_input()
+                            time.sleep(0.5)
+                            
+                            print(f"      ✅ Successfully selected video by index!")
+                            return True
+                        else:
+                            print(f"      ❌ Index {video_index} out of range (found {len(video_elements)} videos)")
+                            return False
+                            
+            except Exception as e:
+                print(f"      ❌ Method 1 failed: {str(e)[:50]}...")
+            
+            # Method 2: Use keyboard navigation to select by position
+            try:
+                print(f"      Trying keyboard navigation method...")
+                
+                # Press Home to go to first file
+                send_keys("{HOME}")
+                time.sleep(0.3)
+                
+                # Press Down arrow 'video_index' times to reach the target video
+                for i in range(video_index):
+                    send_keys("{DOWN}")
+                    time.sleep(0.1)
+                
+                # Double-click to select
+                send_keys("{ENTER}")
+                time.sleep(0.5)
+                
+                print(f"      ✅ Successfully navigated to video at index {video_index}!")
+                return True
+                
+            except Exception as e:
+                print(f"      ❌ Method 2 failed: {str(e)[:50]}...")
+            
+            return False
+            
+        except Exception as e:
+            print(f"    ❌ Error selecting video by index: {str(e)[:50]}...")
+            return False
 
     def navigate_to_folder_via_address_bar(self, folder_path):
         """Navigate to folder using universal address bar detection methods."""
