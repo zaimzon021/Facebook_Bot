@@ -16,7 +16,14 @@ import logging
 from pywinauto import Desktop
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.keyboard import send_keys
-import undetected_chromedriver as uc
+try:
+    import undetected_chromedriver as uc
+    UNDETECTED_CHROME_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Warning: Undetected Chrome not available: {e}")
+    print("🔄 Will use regular Chrome instead")
+    uc = None
+    UNDETECTED_CHROME_AVAILABLE = False
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -821,36 +828,62 @@ class FacebookBot:
     specific page, and automates Reel scheduling.
     """
     def __init__(self):
-        print("Initializing undetected Chrome browser...")
+        if UNDETECTED_CHROME_AVAILABLE:
+            print("Initializing undetected Chrome browser...")
+            
+            try:
+                # Configure undetected Chrome options
+                options = uc.ChromeOptions()
+                options.add_argument("--disable-notifications")
+                options.add_argument("--start-maximized")
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+                
+                # Initialize undetected Chrome driver with simple configuration
+                self.driver = uc.Chrome(options=options, use_subprocess=True)
+                
+                # Execute script to remove webdriver property
+                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                
+                self.wait = WebDriverWait(self.driver, 60)
+                print("✅ Undetected Chrome browser initialized.")
+                return
+                
+            except Exception as e:
+                print(f"❌ Failed to initialize undetected Chrome: {e}")
+                print("🔄 Falling back to regular Chrome...")
         
+        else:
+            print("🔄 Undetected Chrome not available, using regular Chrome...")
+        
+        # Fallback to regular Chrome
         try:
-            # Configure undetected Chrome options
-            options = uc.ChromeOptions()
+            options = webdriver.ChromeOptions()
             options.add_argument("--disable-notifications")
             options.add_argument("--start-maximized")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option('useAutomationExtension', False)
             
-            # Initialize undetected Chrome driver with simple configuration
-            self.driver = uc.Chrome(options=options, use_subprocess=True)
+            self.driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
             
             # Execute script to remove webdriver property
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             self.wait = WebDriverWait(self.driver, 60)
-            print("✅ Undetected Chrome browser initialized.")
+            print("✅ Regular Chrome browser initialized with anti-detection features.")
             
         except Exception as e:
-            print(f"❌ Failed to initialize undetected Chrome: {e}")
-            print("🔄 Falling back to regular Chrome...")
+            print(f"❌ Failed to initialize Chrome with anti-detection: {e}")
+            print("🔄 Using basic Chrome...")
             
-            # Fallback to regular Chrome if undetected fails
+            # Basic Chrome as last resort
             options = webdriver.ChromeOptions()
             options.add_argument("--disable-notifications")
             options.add_argument("--start-maximized")
             self.driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
             self.wait = WebDriverWait(self.driver, 60)
-            print("✅ Regular Chrome browser initialized.")
+            print("✅ Basic Chrome browser initialized.")
     
     
     def schedule_reels(self):
