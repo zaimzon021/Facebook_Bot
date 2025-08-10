@@ -16,9 +16,689 @@ import logging
 from pywinauto import Desktop
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.keyboard import send_keys
+import undetected_chromedriver as uc
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def main_control_flow(folder_page_array):
+    """
+    Main control function that handles the flow of processing multiple video folders and pages.
+    
+    Args:
+        folder_page_array (list): Array of dictionaries in format:
+                                 [{"video_folder_path": "path1", "page_name": "page1"},
+                                  {"video_folder_path": "path2", "page_name": "page2"}]
+    """
+    global VIDEO_FOLDER_PATH
+    
+    print("🚀 Starting main control flow...")
+    print(f"📁 Processing {len(folder_page_array)} folder-page combinations")
+    
+    # Initialize the bot once and perform login
+    print("🤖 Initializing Facebook bot...")
+    bot = FacebookBot()
+    print("🔐 Performing initial login to Facebook...")
+    
+    # Login to Facebook first (without navigating to reel composer)
+    print("Navigating to facebook.com...")
+    bot.driver.get("https://www.facebook.com/")
+
+    print("Entering login credentials...")
+    email_field = bot.wait.until(EC.presence_of_element_located((By.ID, "email")))
+    password_field = bot.wait.until(EC.presence_of_element_located((By.ID, "pass")))
+    
+    email_field.send_keys(FACEBOOK_EMAIL)
+    password_field.send_keys(FACEBOOK_PASSWORD)
+    
+    login_button = bot.wait.until(EC.element_to_be_clickable((By.NAME, "login")))
+    login_button.click()
+    print("Login request submitted.")
+
+    print("\n--- ⚠️ ACTION REQUIRED ⚠️ ---")
+    input("Please complete any login verification steps in the browser window, then press Enter here to continue...")
+
+    print("\nVerification complete. Forcing navigation to the main Facebook homepage...")
+    bot.driver.get("https://www.facebook.com/")
+    
+    print("Waiting for the homepage to be ready...")
+    feed_ready_xpath = "//span[contains(text(), \"What's on your mind\")]"
+    bot.wait.until(EC.presence_of_element_located((By.XPATH, feed_ready_xpath)))
+    print("✅ Facebook login completed successfully.")
+    
+    try:
+        for index, folder_page_config in enumerate(folder_page_array):
+            current_folder = folder_page_config.get("video_folder_path")
+            current_page = folder_page_config.get("page_name")
+            
+            print(f"\n{'='*50}")
+            print(f"🔄 Processing {index + 1}/{len(folder_page_array)}")
+            print(f"📁 Folder: {current_folder}")
+            print(f"📄 Page: {current_page}")
+            print(f"{'='*50}")
+            
+            # For pages after the first one, navigate to home page first
+            if index > 0:
+                print("🏠 Navigating to home page before switching to next page...")
+                bot.driver.get("https://business.facebook.com/latest/home")
+                time.sleep(3)
+            
+            # Step 1: Ensure Chrome is focused before switching pages
+            print("�  Ensuring Chrome browser is focused...")
+            ensure_chrome_focus(bot.driver)
+            
+            # Step 2: Switch to the page
+            print(f"📄 Switching to page: {current_page}")
+            switch_success = switch_to_page(bot, current_page)
+            
+            if not switch_success:
+                print(f"❌ Failed to switch to page '{current_page}'. Skipping...")
+                continue
+            
+            print(f"✅ Successfully switched to page: {current_page}")
+            
+            # Step 3: Update video folder path
+            VIDEO_FOLDER_PATH = current_folder
+            print(f"📁 Updated VIDEO_FOLDER_PATH to: {VIDEO_FOLDER_PATH}")
+            
+            # Step 4: Navigate to reel composer and start the scheduling process
+            print(f"🎬 Opening Meta Reel Composer for page: {current_page}")
+            
+            # Load reel composer with retry mechanism
+            success = bot.load_reel_composer_with_retry()
+            if not success:
+                print(f"❌ Failed to load reel composer for page '{current_page}'. Skipping...")
+                continue
+            
+            print("✅ Reel composer loaded successfully. Starting video scheduling...")
+            
+            # Step 5: Start the reel scheduling process
+            print(f"🎬 Starting video scheduling process...")
+            scheduling_success = bot.schedule_reels()
+            
+            if scheduling_success:
+                print(f"✅ Successfully completed processing for {current_page}")
+            else:
+                print(f"❌ Failed to process videos for {current_page}")
+                continue
+        
+        print(f"\n🎉 All folder-page configurations processed successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error in main control flow: {e}")
+        logging.error(f"Main control flow error: {e}")
+    
+    finally:
+        # Close the browser when all processing is complete using the bot's close method
+        print("🔚 Terminating process...")
+        try:
+            bot.close()
+            print("✅ Browser termination completed")
+        except Exception as e:
+            print(f"⚠️ Error during browser termination: {e}")
+        
+        print("🏁 Main control flow terminated")
+
+def switch_to_page(bot, page_name):
+    """
+    Function to switch to a different Facebook page - CORRECT FLOW WITH EXACT REQUIREMENTS
+    
+    Args:
+        bot: FacebookBot instance
+        page_name (str): Name of the page to switch to
+        
+    Returns:
+        bool: True if page switch was successful, False otherwise
+    """
+    print(f"🔄 SWITCHING TO PAGE: '{page_name}'")
+    
+    try:
+        # STEP 0: Ensure Chrome is focused and active
+        print("�  Ensuring Chrome browser is focused...")
+        ensure_chrome_focus(bot.driver)
+        
+        # STEP 1: Make sure we're on home page and reload for safety
+        print("📱 STEP 1: Ensuring we're on home page...")
+        home_url = "https://business.facebook.com/latest/home"
+        current_url = bot.driver.current_url
+        
+        if home_url not in current_url:
+            print(f"🔄 Not on home page, navigating to: {home_url}")
+            bot.driver.get(home_url)
+        else:
+            print("🔄 Already on home page, reloading for safety...")
+            bot.driver.refresh()
+        
+        time.sleep(5)
+        print("✅ STEP 1 COMPLETED: On home page and ready")
+        
+        # STEP 2: Find and click the page selector div with 10 methods
+        print("🔍 STEP 2: Finding page selector div with 10 methods...")
+        
+        page_selector_clicked = False
+        
+        # METHOD 1: Exact class combination
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 1: Exact class combination...")
+                selector = "//div[contains(@class, 'x1vvvo52') and contains(@class, 'x1fvot60') and contains(@class, 'xo1l8bm') and contains(@class, 'xxio538') and contains(@class, 'xbsr9hj') and contains(@class, 'xuxw1ft') and contains(@class, 'x6ikm8r') and contains(@class, 'x10wlt62') and contains(@class, 'xlyipyv') and contains(@class, 'x1h4wwuj') and contains(@class, 'xeuugli')]"
+                elements = bot.driver.find_elements(By.XPATH, selector)
+                print(f"Found {len(elements)} elements with exact classes")
+                for element in elements:
+                    try:
+                        element.click()
+                        print("✅ PAGE METHOD 1: Success!")
+                        page_selector_clicked = True
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 1 failed: {e}")
+        
+        # METHOD 2: Partial class combination (first 6 classes)
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 2: Partial class combination...")
+                selector = "//div[contains(@class, 'x1vvvo52') and contains(@class, 'x1fvot60') and contains(@class, 'xo1l8bm') and contains(@class, 'xxio538') and contains(@class, 'xbsr9hj') and contains(@class, 'xuxw1ft')]"
+                elements = bot.driver.find_elements(By.XPATH, selector)
+                print(f"Found {len(elements)} elements with partial classes")
+                for element in elements:
+                    try:
+                        bot.driver.execute_script("arguments[0].click();", element)
+                        print("✅ PAGE METHOD 2: Success!")
+                        page_selector_clicked = True
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 2 failed: {e}")
+        
+        # METHOD 3: Descendant approach
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 3: Descendant approach...")
+                selector = "//div[descendant::*[contains(@class, 'x1vvvo52')]]"
+                elements = bot.driver.find_elements(By.XPATH, selector)
+                print(f"Found {len(elements)} elements with descendant approach")
+                for element in elements:
+                    if element.text.strip() and len(element.text.strip()) > 2:
+                        try:
+                            element.click()
+                            print("✅ PAGE METHOD 3: Success!")
+                            page_selector_clicked = True
+                            break
+                        except:
+                            continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 3 failed: {e}")
+        
+        # METHOD 4: CSS Selector approach
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 4: CSS Selector...")
+                elements = bot.driver.find_elements(By.CSS_SELECTOR, "div.x1vvvo52.x1fvot60.xo1l8bm.xxio538")
+                print(f"Found {len(elements)} elements with CSS selector")
+                for element in elements:
+                    try:
+                        element.click()
+                        print("✅ PAGE METHOD 4: Success!")
+                        page_selector_clicked = True
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 4 failed: {e}")
+        
+        # METHOD 5: JavaScript click approach
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 5: JavaScript click...")
+                js_script = '''
+                var elements = document.querySelectorAll("div.x1vvvo52.x1fvot60.xo1l8bm.xxio538");
+                for (var i = 0; i < elements.length; i++) {
+                    if (elements[i].textContent.trim().length > 2) {
+                        elements[i].click();
+                        return true;
+                    }
+                }
+                return false;
+                '''
+                result = bot.driver.execute_script(js_script)
+                if result:
+                    print("✅ PAGE METHOD 5: Success!")
+                    page_selector_clicked = True
+            except Exception as e:
+                print(f"❌ PAGE METHOD 5 failed: {e}")
+        
+        # METHOD 6: ActionChains approach
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 6: ActionChains...")
+                from selenium.webdriver.common.action_chains import ActionChains
+                selector = "//div[contains(@class, 'x1vvvo52') and contains(@class, 'x1fvot60')]"
+                elements = bot.driver.find_elements(By.XPATH, selector)
+                print(f"Found {len(elements)} elements for ActionChains")
+                for element in elements:
+                    try:
+                        ActionChains(bot.driver).click(element).perform()
+                        print("✅ PAGE METHOD 6: Success!")
+                        page_selector_clicked = True
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 6 failed: {e}")
+        
+        # METHOD 7: Parent-child relationship
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 7: Parent-child relationship...")
+                selector = "//div[contains(@class, 'x6s0dn4')]//div[contains(@class, 'x1vvvo52')]"
+                elements = bot.driver.find_elements(By.XPATH, selector)
+                print(f"Found {len(elements)} elements with parent-child")
+                for element in elements:
+                    try:
+                        bot.driver.execute_script("arguments[0].click();", element)
+                        print("✅ PAGE METHOD 7: Success!")
+                        page_selector_clicked = True
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 7 failed: {e}")
+        
+        # METHOD 8: Text-based search
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 8: Text-based search...")
+                all_divs = bot.driver.find_elements(By.XPATH, "//div[text()]")
+                print(f"Found {len(all_divs)} divs with text")
+                for div in all_divs[:50]:
+                    text = div.text.strip()
+                    if text and 3 <= len(text) <= 50:
+                        try:
+                            div.click()
+                            print(f"✅ PAGE METHOD 8: Success on '{text}'!")
+                            page_selector_clicked = True
+                            break
+                        except:
+                            continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 8 failed: {e}")
+        
+        # METHOD 9: Location-based filtering
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 9: Location-based filtering...")
+                all_elements = bot.driver.find_elements(By.XPATH, "//div")
+                print(f"Found {len(all_elements)} div elements")
+                for element in all_elements[:100]:
+                    try:
+                        location = element.location
+                        if location['x'] < 400 and element.text.strip():
+                            element.click()
+                            print("✅ PAGE METHOD 9: Success!")
+                            page_selector_clicked = True
+                            break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 9 failed: {e}")
+        
+        # METHOD 10: Brute force approach
+        if not page_selector_clicked:
+            try:
+                print("🔍 PAGE METHOD 10: Brute force...")
+                all_clickable = bot.driver.find_elements(By.XPATH, "//*[@role='button'] | //div | //span")
+                print(f"Found {len(all_clickable)} clickable elements")
+                for element in all_clickable[:100]:
+                    try:
+                        text = element.text.strip()
+                        if text and 3 <= len(text) <= 30:
+                            element.click()
+                            print(f"✅ PAGE METHOD 10: Success on '{text}'!")
+                            page_selector_clicked = True
+                            break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE METHOD 10 failed: {e}")
+        
+        if not page_selector_clicked:
+            print("❌ ALL 10 PAGE METHODS FAILED")
+            return False
+        
+        time.sleep(3)
+        print("✅ STEP 2 COMPLETED: Page selector clicked")
+        
+        # STEP 3: Find and click search bar with 10 methods (2-3 times each)
+        print("🔍 STEP 3: Finding search bar with 10 methods...")
+        
+        search_bar_clicked = False
+        
+        for attempt in range(3):  # Try each method 2-3 times
+            print(f"🔄 Search bar attempt {attempt + 1}/3")
+            
+            # SEARCH METHOD 1: Exact placeholder
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 1: Exact placeholder...")
+                    element = bot.driver.find_element(By.XPATH, "//input[@placeholder='Search for a business asset']")
+                    element.click()
+                    print("✅ SEARCH METHOD 1: Success!")
+                    search_bar_clicked = True
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 1 failed: {e}")
+            
+            # SEARCH METHOD 2: Exact class combination
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 2: Exact class combination...")
+                    selector = "//input[contains(@class, 'xjbqb8w') and contains(@class, 'x972fbf') and contains(@class, 'x10w94by') and contains(@class, 'x1qhh985') and contains(@class, 'x14e42zd')]"
+                    element = bot.driver.find_element(By.XPATH, selector)
+                    element.click()
+                    print("✅ SEARCH METHOD 2: Success!")
+                    search_bar_clicked = True
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 2 failed: {e}")
+            
+            # SEARCH METHOD 3: Partial class combination
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 3: Partial class combination...")
+                    selector = "//input[contains(@class, 'xjbqb8w') and contains(@class, 'x972fbf') and contains(@class, 'x10w94by')]"
+                    element = bot.driver.find_element(By.XPATH, selector)
+                    element.click()
+                    print("✅ SEARCH METHOD 3: Success!")
+                    search_bar_clicked = True
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 3 failed: {e}")
+            
+            # SEARCH METHOD 4: Type and placeholder combination
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 4: Type and placeholder...")
+                    elements = bot.driver.find_elements(By.XPATH, "//input[@type='text']")
+                    for element in elements:
+                        placeholder = element.get_attribute('placeholder') or ""
+                        if 'search' in placeholder.lower() or 'business' in placeholder.lower():
+                            element.click()
+                            print("✅ SEARCH METHOD 4: Success!")
+                            search_bar_clicked = True
+                            break
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 4 failed: {e}")
+            
+            # SEARCH METHOD 5: JavaScript approach
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 5: JavaScript...")
+                    js_script = '''
+                    var inputs = document.querySelectorAll("input[type='text']");
+                    for (var i = 0; i < inputs.length; i++) {
+                        if (inputs[i].placeholder && inputs[i].placeholder.toLowerCase().includes('search')) {
+                            inputs[i].click();
+                            return true;
+                        }
+                    }
+                    return false;
+                    '''
+                    result = bot.driver.execute_script(js_script)
+                    if result:
+                        print("✅ SEARCH METHOD 5: Success!")
+                        search_bar_clicked = True
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 5 failed: {e}")
+            
+            # SEARCH METHOD 6: CSS Selector
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 6: CSS Selector...")
+                    element = bot.driver.find_element(By.CSS_SELECTOR, "input.xjbqb8w.x972fbf")
+                    element.click()
+                    print("✅ SEARCH METHOD 6: Success!")
+                    search_bar_clicked = True
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 6 failed: {e}")
+            
+            # SEARCH METHOD 7: ActionChains
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 7: ActionChains...")
+                    from selenium.webdriver.common.action_chains import ActionChains
+                    elements = bot.driver.find_elements(By.XPATH, "//input[@type='text']")
+                    for element in elements:
+                        placeholder = element.get_attribute('placeholder') or ""
+                        if 'business' in placeholder.lower():
+                            ActionChains(bot.driver).click(element).perform()
+                            print("✅ SEARCH METHOD 7: Success!")
+                            search_bar_clicked = True
+                            break
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 7 failed: {e}")
+            
+            # SEARCH METHOD 8: ID-based search
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 8: ID-based...")
+                    elements = bot.driver.find_elements(By.XPATH, "//input[starts-with(@id, 'js_')]")
+                    for element in elements:
+                        placeholder = element.get_attribute('placeholder') or ""
+                        if 'search' in placeholder.lower():
+                            element.click()
+                            print("✅ SEARCH METHOD 8: Success!")
+                            search_bar_clicked = True
+                            break
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 8 failed: {e}")
+            
+            # SEARCH METHOD 9: Aria attributes
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 9: Aria attributes...")
+                    elements = bot.driver.find_elements(By.XPATH, "//input[@aria-busy='false' and @aria-disabled='false']")
+                    for element in elements:
+                        placeholder = element.get_attribute('placeholder') or ""
+                        if 'business' in placeholder.lower():
+                            element.click()
+                            print("✅ SEARCH METHOD 9: Success!")
+                            search_bar_clicked = True
+                            break
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 9 failed: {e}")
+            
+            # SEARCH METHOD 10: Brute force all inputs
+            if not search_bar_clicked:
+                try:
+                    print("🔍 SEARCH METHOD 10: Brute force all inputs...")
+                    all_inputs = bot.driver.find_elements(By.XPATH, "//input")
+                    for element in all_inputs:
+                        try:
+                            element.click()
+                            print("✅ SEARCH METHOD 10: Success!")
+                            search_bar_clicked = True
+                            break
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"❌ SEARCH METHOD 10 failed: {e}")
+            
+            if search_bar_clicked:
+                break
+            
+            time.sleep(1)  # Wait between attempts
+        
+        if not search_bar_clicked:
+            print("❌ ALL SEARCH METHODS FAILED")
+            return False
+        
+        time.sleep(2)
+        print("✅ STEP 3 COMPLETED: Search bar clicked")
+        
+        # STEP 5: Paste the page name
+        print(f"📝 STEP 5: Pasting page name '{page_name}'...")
+        try:
+            # Find the active input and enter text
+            active_element = bot.driver.switch_to.active_element
+            active_element.clear()
+            active_element.send_keys(page_name)
+            time.sleep(3)
+            print(f"✅ STEP 5 COMPLETED: Page name '{page_name}' entered")
+        except Exception as e:
+            print(f"❌ STEP 5 failed: {e}")
+            return False
+        
+        # STEP 6: Click on the page with 6 methods
+        print(f"🔍 STEP 6: Looking for page '{page_name}' with 6 methods...")
+        
+        page_clicked = False
+        
+        # PAGE CLICK METHOD 1: Exact text match
+        if not page_clicked:
+            try:
+                print("🔍 PAGE CLICK METHOD 1: Exact text match...")
+                elements = bot.driver.find_elements(By.XPATH, f"//*[text()='{page_name}']")
+                for element in elements:
+                    if element.tag_name != 'input':
+                        try:
+                            element.click()
+                            print("✅ PAGE CLICK METHOD 1: Success!")
+                            page_clicked = True
+                            break
+                        except:
+                            continue
+            except Exception as e:
+                print(f"❌ PAGE CLICK METHOD 1 failed: {e}")
+        
+        # PAGE CLICK METHOD 2: Contains text
+        if not page_clicked:
+            try:
+                print("🔍 PAGE CLICK METHOD 2: Contains text...")
+                elements = bot.driver.find_elements(By.XPATH, f"//*[contains(text(), '{page_name}')]")
+                for element in elements:
+                    if element.tag_name != 'input':
+                        try:
+                            element.click()
+                            print("✅ PAGE CLICK METHOD 2: Success!")
+                            page_clicked = True
+                            break
+                        except:
+                            continue
+            except Exception as e:
+                print(f"❌ PAGE CLICK METHOD 2 failed: {e}")
+        
+        # PAGE CLICK METHOD 3: JavaScript click
+        if not page_clicked:
+            try:
+                print("🔍 PAGE CLICK METHOD 3: JavaScript click...")
+                js_script = f'''
+                var elements = document.querySelectorAll("*");
+                for (var i = 0; i < elements.length; i++) {{
+                    if (elements[i].textContent.includes("{page_name}") && elements[i].tagName !== "INPUT") {{
+                        elements[i].click();
+                        return true;
+                    }}
+                }}
+                return false;
+                '''
+                result = bot.driver.execute_script(js_script)
+                if result:
+                    print("✅ PAGE CLICK METHOD 3: Success!")
+                    page_clicked = True
+            except Exception as e:
+                print(f"❌ PAGE CLICK METHOD 3 failed: {e}")
+        
+        # PAGE CLICK METHOD 4: Role-based search
+        if not page_clicked:
+            try:
+                print("🔍 PAGE CLICK METHOD 4: Role-based search...")
+                elements = bot.driver.find_elements(By.XPATH, f"//div[@role='option' and contains(text(), '{page_name}')]")
+                for element in elements:
+                    try:
+                        element.click()
+                        print("✅ PAGE CLICK METHOD 4: Success!")
+                        page_clicked = True
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE CLICK METHOD 4 failed: {e}")
+        
+        # PAGE CLICK METHOD 5: ActionChains
+        if not page_clicked:
+            try:
+                print("🔍 PAGE CLICK METHOD 5: ActionChains...")
+                from selenium.webdriver.common.action_chains import ActionChains
+                elements = bot.driver.find_elements(By.XPATH, f"//*[contains(text(), '{page_name}')]")
+                for element in elements:
+                    if element.tag_name != 'input':
+                        try:
+                            ActionChains(bot.driver).click(element).perform()
+                            print("✅ PAGE CLICK METHOD 5: Success!")
+                            page_clicked = True
+                            break
+                        except:
+                            continue
+            except Exception as e:
+                print(f"❌ PAGE CLICK METHOD 5 failed: {e}")
+        
+        # PAGE CLICK METHOD 6: Brute force clickable elements
+        if not page_clicked:
+            try:
+                print("🔍 PAGE CLICK METHOD 6: Brute force...")
+                all_elements = bot.driver.find_elements(By.XPATH, "//*")
+                for element in all_elements:
+                    try:
+                        text = element.text.strip()
+                        if page_name.lower() in text.lower() and element.tag_name != 'INPUT':
+                            element.click()
+                            print("✅ PAGE CLICK METHOD 6: Success!")
+                            page_clicked = True
+                            break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"❌ PAGE CLICK METHOD 6 failed: {e}")
+        
+        if not page_clicked:
+            print("❌ ALL PAGE CLICK METHODS FAILED")
+            return False
+        
+        time.sleep(10)  # Wait 10 seconds
+        print("✅ STEP 6 COMPLETED: Page clicked")
+        
+        # Navigate to content posts
+        print(f"📱 Navigating to: {BUSINESS_SUITE_URL}")
+        bot.driver.get(BUSINESS_SUITE_URL)
+        time.sleep(3)
+        
+        print(f"✅ SUCCESSFULLY SWITCHED TO PAGE: {page_name}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ MAJOR ERROR in switch_to_page: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+def ensure_chrome_focus(driver):
+    """
+    Ensures Chrome browser window is focused and active
+    """
+    try:
+        # Bring Chrome window to front
+        driver.switch_to.window(driver.current_window_handle)
+        
+        # Maximize window to ensure it's visible
+        driver.maximize_window()
+        
+        # Click on the browser to ensure focus
+        driver.execute_script("window.focus();")
+        
+        print("✅ Chrome window focused and active")
+        return True
+    except Exception as e:
+        print(f"⚠️ Warning: Could not ensure Chrome focus: {e}")
+        return False
 
 def find_and_click_text(search_text: str, timeout: int = 10, partial: bool = False, text_to_enter: str = None, double_click: bool = False) -> bool:
     """
@@ -41,18 +721,21 @@ def find_and_click_text(search_text: str, timeout: int = 10, partial: bool = Fal
             desktop = Desktop(backend="uia")
             all_windows = desktop.windows()
 
-            # Filter: Include Chrome or active File Explorer; exclude VS Code
+            # Filter: Include Chrome and File Explorer (when active - opened by Chrome); exclude VS Code
             filtered_windows = []
             for win in all_windows:
                     win_title = win.window_text().lower()
                     class_name = win.element_info.class_name or ""
 
                     if "chrome" in win_title:
-                             filtered_windows.append(win)
-                    elif class_name == "CabinetWClass" and win.is_active():  # File Explorer (active only)
-                             filtered_windows.append(win)
+                        filtered_windows.append(win)
+                    elif class_name == "CabinetWClass" and win.is_active():  # File Explorer (active only - opened by Chrome)
+                        filtered_windows.append(win)
+                        print(f"🔍 Found active File Explorer (opened by Chrome)")
                     elif "visual studio code" in win_title:
-                            continue  # Skip VS Code
+                        continue  # Skip VS Code
+                    elif "notepad" in win_title or "calculator" in win_title or "settings" in win_title:
+                        continue  # Skip other common applications
 
             for win in filtered_windows:
                 try:
@@ -107,13 +790,26 @@ def find_and_click_text(search_text: str, timeout: int = 10, partial: bool = Fal
 FACEBOOK_EMAIL = "zaimzon134@gmail.com"
 FACEBOOK_PASSWORD = "zaim.com123*"
 
+# ———- MULTI-PAGE CONFIGURATION ———-
+# Configure multiple pages and their corresponding video folders
+# Each entry should have a "video_folder_path" and "page_name"
+# Use forward slashes (/) for folder paths
+FOLDER_PAGE_CONFIGS = [
+    {
+        "video_folder_path": "C:/Users/Zaim Iftikhar/Downloads/Video/Aismr",
+        "page_name": "true hearted"
+    },
+    {
+        "video_folder_path": "C:/Users/Zaim Iftikhar/Downloads/Video/Nous Canteen", 
+        "page_name": "Random Page"
+    }
+    # Add more page-folder combinations as needed
+]
 
+# ———- LEGACY CONFIGURATION (for backward compatibility) ———-
+# These are used when running individual functions, but main_control_flow uses FOLDER_PAGE_CONFIGS
 PAGE_NAME_TO_SWITCH_TO = "true hearted"
-
-
-# Use forward slashes (/).
 VIDEO_FOLDER_PATH = "C:/Users/Zaim Iftikhar/Downloads/Video/Aismr"
-
 
 BUSINESS_SUITE_URL = "https://business.facebook.com/latest/content/posts"
 
@@ -125,13 +821,36 @@ class FacebookBot:
     specific page, and automates Reel scheduling.
     """
     def __init__(self):
-        print("Initializing a new Chrome browser...")
-        options = webdriver.ChromeOptions()
-        options.add_argument("--disable-notifications")
-        options.add_argument("--start-maximized")
-        self.driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-        self.wait = WebDriverWait(self.driver, 60)
-        print("✅ Browser initialized.")
+        print("Initializing undetected Chrome browser...")
+        
+        try:
+            # Configure undetected Chrome options
+            options = uc.ChromeOptions()
+            options.add_argument("--disable-notifications")
+            options.add_argument("--start-maximized")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            
+            # Initialize undetected Chrome driver with simple configuration
+            self.driver = uc.Chrome(options=options, use_subprocess=True)
+            
+            # Execute script to remove webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            self.wait = WebDriverWait(self.driver, 60)
+            print("✅ Undetected Chrome browser initialized.")
+            
+        except Exception as e:
+            print(f"❌ Failed to initialize undetected Chrome: {e}")
+            print("🔄 Falling back to regular Chrome...")
+            
+            # Fallback to regular Chrome if undetected fails
+            options = webdriver.ChromeOptions()
+            options.add_argument("--disable-notifications")
+            options.add_argument("--start-maximized")
+            self.driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+            self.wait = WebDriverWait(self.driver, 60)
+            print("✅ Regular Chrome browser initialized.")
     
     
     def schedule_reels(self):
@@ -141,10 +860,10 @@ class FacebookBot:
             video_files = [f for f in os.listdir(VIDEO_FOLDER_PATH) if f.endswith(('.mp4', '.mov'))]
             if not video_files:
                 print("No video files (.mp4, .mov) found in the specified folder.")
-                return
+                return True  # Return True as there's nothing to process (success case)
         except FileNotFoundError:
             print(f"Error: The folder '{VIDEO_FOLDER_PATH}' was not found. Please check the path.")
-            return
+            return False  # Return False as this is an error case
 
         print(f"Found {len(video_files)} videos to schedule.")
 
@@ -228,6 +947,10 @@ class FacebookBot:
                     logging.error(f"❌ Failed to schedule reel for {video_file}. Error: {e}")
             else:
                 print(f"❌ Failed to upload video: {video_file}")
+        
+        # All videos processed successfully
+        print(f"✅ All videos in folder '{VIDEO_FOLDER_PATH}' have been processed and moved to processed folder")
+        return True
 
     def clean_caption(self, caption):
         """Clean up the caption by removing common prefixes and making it more readable."""
@@ -2115,15 +2838,54 @@ class FacebookBot:
 
 
 if __name__ == "__main__":
-    bot = None
-    try:
-        bot = FacebookBot()
-        bot.login_and_navigate()
-        bot.schedule_reels()
-    except Exception as e:
-        print(f"\n--- ❌ AN ERROR OCCURRED ❌ ---")
-        print(f"Error details: {e}")
+    print("🤖 Facebook Reel Scheduler Bot")
+    print("=" * 50)
+    print("Choose execution mode:")
+    print("1. Multi-Page Mode (Process multiple pages and folders)")
+    print("2. Single Page Mode (Process one page only)")
+    print("=" * 50)
+    
+    choice = input("Enter your choice (1 or 2): ").strip()
+    
+    if choice == "1":
+        # Multi-page mode using FOLDER_PAGE_CONFIGS
+        print(f"\n🚀 Starting Multi-Page Mode...")
+        print(f"📁 Will process {len(FOLDER_PAGE_CONFIGS)} page-folder combinations:")
+        
+        for i, config in enumerate(FOLDER_PAGE_CONFIGS, 1):
+            print(f"   {i}. Page: '{config['page_name']}' → Folder: '{config['video_folder_path']}'")
+        
+        confirm = input(f"\nProceed with these configurations? (y/n): ").strip().lower()
+        
+        if confirm == 'y':
+            try:
+                main_control_flow(FOLDER_PAGE_CONFIGS)
+            except Exception as e:
+                print(f"\n--- ❌ AN ERROR OCCURRED ❌ ---")
+                print(f"Error details: {e}")
+                input("Press Enter to exit.")
+        else:
+            print("❌ Operation cancelled by user.")
+    
+    elif choice == "2":
+        # Single page mode (legacy)
+        print(f"\n🚀 Starting Single Page Mode...")
+        print(f"📄 Page: '{PAGE_NAME_TO_SWITCH_TO}'")
+        print(f"📁 Folder: '{VIDEO_FOLDER_PATH}'")
+        
+        bot = None
+        try:
+            bot = FacebookBot()
+            bot.login_and_navigate()
+            bot.schedule_reels()
+        except Exception as e:
+            print(f"\n--- ❌ AN ERROR OCCURRED ❌ ---")
+            print(f"Error details: {e}")
+            input("Press Enter to exit.")
+        finally:
+            if bot:
+                bot.close()
+    
+    else:
+        print("❌ Invalid choice. Please run the script again and choose 1 or 2.")
         input("Press Enter to exit.")
-    finally:
-        if bot:
-            bot.close()
