@@ -18,20 +18,22 @@ if %errorlevel% neq 0 (
 echo Python is installed. Installing required packages...
 echo.
 
-echo Installing core dependencies...
-pip install selenium webdriver-manager pywinauto pyautogui pyperclip
+echo Trying pip installation...
+pip install -r requirements.txt
 
 echo.
-echo Installing undetected Chrome driver for bot detection avoidance...
-pip install undetected-chromedriver
+echo If pip failed, trying with py -m pip...
+py -m pip install -r requirements.txt
 
 echo.
-echo Installing additional requirements if requirements.txt exists...
-if exist requirements.txt (
-    pip install -r requirements.txt
-) else (
-    echo No requirements.txt found, skipping...
-)
+echo If that failed too, trying with python -m pip...
+python -m pip install -r requirements.txt
+
+echo.
+echo Verifying installation...
+python -c "import selenium; print('✅ Selenium installed successfully')" 2>nul || echo "❌ Selenium installation failed"
+python -c "import undetected_chromedriver; print('✅ Undetected Chrome installed successfully')" 2>nul || echo "❌ Undetected Chrome installation failed"
+python -c "import pywinauto; print('✅ PyWinAuto installed successfully')" 2>nul || echo "❌ PyWinAuto installation failed"
 
 if %errorlevel% neq 0 (
     echo.
@@ -62,11 +64,20 @@ echo    - Single Page Mode: Legacy single page processing
 echo.
 echo RUN THE BOT WITH:
 echo    python run_bot.py
+echo    OR if that fails: py run_bot.py
 echo.
 echo TROUBLESHOOTING:
+echo - If you get "No module named 'selenium'" error:
+echo   Run: py -m pip install -r requirements.txt
+echo   Then try: py run_bot.py
 echo - If undetected Chrome fails, bot will fallback to regular Chrome
 echo - Check README.md for detailed configuration instructions
 echo - Debug screenshots are saved automatically for troubleshooting
+echo.
+echo QUICK FIX FOR MODULE ERRORS:
+echo If you're getting module not found errors, run these commands:
+echo   py -m pip install --upgrade pip
+echo   py -m pip install -r requirements.txt
 echo ===================================
 echo.
 pause
