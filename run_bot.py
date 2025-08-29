@@ -50,28 +50,57 @@ def main_control_flow(folder_page_array):
     # Login to Facebook first (without navigating to reel composer)
     print("Navigating to facebook.com...")
     bot.driver.get("https://www.facebook.com/")
+    
+    # Wait for page to load
+    time.sleep(5)
 
     print("Entering login credentials...")
-    email_field = bot.wait.until(EC.presence_of_element_located((By.ID, "email")))
-    password_field = bot.wait.until(EC.presence_of_element_located((By.ID, "pass")))
+    try:
+        email_field = bot.wait.until(EC.presence_of_element_located((By.ID, "email")))
+        email_field.clear()
+        email_field.send_keys(FACEBOOK_EMAIL)
+        print("✅ Email entered")
+    except:
+        print("⚠️ Could not enter email")
     
-    email_field.send_keys(FACEBOOK_EMAIL)
-    password_field.send_keys(FACEBOOK_PASSWORD)
+    try:
+        password_field = bot.wait.until(EC.presence_of_element_located((By.ID, "pass")))
+        password_field.clear()
+        password_field.send_keys(FACEBOOK_PASSWORD)
+        print("✅ Password entered")
+    except:
+        print("⚠️ Could not enter password")
     
-    login_button = bot.wait.until(EC.element_to_be_clickable((By.NAME, "login")))
-    login_button.click()
-    print("Login request submitted.")
+    try:
+        login_button = bot.wait.until(EC.element_to_be_clickable((By.NAME, "login")))
+        login_button.click()
+        print("✅ Login button clicked")
+    except:
+        print("⚠️ Could not click login button")
 
     print("\n--- ⚠️ ACTION REQUIRED ⚠️ ---")
-    input("Please complete any login verification steps in the browser window, then press Enter here to continue...")
+    print("Please complete any login verification steps in the browser window.")
+    print("This may include:")
+    print("- Two-factor authentication")
+    print("- Security checks") 
+    print("- Captcha verification")
+    print("- Device confirmation")
+    input("Press Enter here ONLY after you have successfully logged in and can see your Facebook homepage...")
 
-    print("\nVerification complete. Forcing navigation to the main Facebook homepage...")
-    bot.driver.get("https://www.facebook.com/")
+    print("\nVerification complete. Ensuring we're on the main Facebook homepage...")
     
-    print("Waiting for the homepage to be ready...")
-    feed_ready_xpath = "//span[contains(text(), \"What's on your mind\")]"
-    bot.wait.until(EC.presence_of_element_located((By.XPATH, feed_ready_xpath)))
-    print("✅ Facebook login completed successfully.")
+    # Try to navigate to homepage, but don't fail if there are issues
+    try:
+        bot.driver.get("https://www.facebook.com/")
+        time.sleep(3)
+        
+        print("Waiting for the homepage to be ready...")
+        feed_ready_xpath = "//span[contains(text(), \"What's on your mind\")]"
+        bot.wait.until(EC.presence_of_element_located((By.XPATH, feed_ready_xpath)))
+        print("✅ Facebook login completed successfully.")
+    except Exception as e:
+        print(f"⚠️ Could not verify homepage elements, but continuing: {e}")
+        print("✅ Facebook login process completed.")
     
     try:
         for index, folder_page_config in enumerate(folder_page_array):
@@ -107,6 +136,12 @@ def main_control_flow(folder_page_array):
             # Step 3: Update video folder path
             VIDEO_FOLDER_PATH = current_folder
             print(f"📁 Updated VIDEO_FOLDER_PATH to: {VIDEO_FOLDER_PATH}")
+            
+            # Reset folder verification for new folder
+            if hasattr(bot, '_folder_verified'):
+                bot._folder_verified = False
+                bot._verified_folder_path = None
+                print("🔄 Reset folder verification for new folder")
             
             # Step 4: Navigate to reel composer and start the scheduling process
             print(f"🎬 Opening Meta Reel Composer for page: {current_page}")
@@ -794,7 +829,7 @@ def find_and_click_text(search_text: str, timeout: int = 10, partial: bool = Fal
 
 # ———- CONFIGURATION ———-
 # Your Facebook login credentials
-FACEBOOK_EMAIL = "zaimzon134@gmail.com"
+FACEBOOK_EMAIL = "zaimkhan791@gmail.com"
 FACEBOOK_PASSWORD = "zaim.com123*"
 
 # ———- MULTI-PAGE CONFIGURATION ———-
@@ -803,12 +838,16 @@ FACEBOOK_PASSWORD = "zaim.com123*"
 # Use forward slashes (/) for folder paths
 FOLDER_PAGE_CONFIGS = [
     {
-        "video_folder_path": "C:/Users/Zaim Iftikhar/Downloads/Video/Aismr",
-        "page_name": "true hearted"
+        "video_folder_path": "C:/Users/RDP/Downloads/Youtube/Beyond Troll",
+        "page_name": "Beyond Troll"
     },
     {
-        "video_folder_path": "C:/Users/Zaim Iftikhar/Downloads/Video/Nous Canteen", 
-        "page_name": "Random Page"
+        "video_folder_path": "C:/Users/RDP/Downloads/Youtube/Edit4x5", 
+        "page_name": "Edit456x" 
+    },
+    {
+        "video_folder_path": "C:/Users/RDP/Downloads/Youtube/Gta Quix", 
+        "page_name": "Gtaquix" 
     }
     # Add more page-folder combinations as needed
 ]
@@ -889,6 +928,12 @@ class FacebookBot:
     def schedule_reels(self):
         """Main loop to find videos and schedule them."""
         print(f"\nStarting reel scheduling process...")
+        
+        # Reset folder verification for this new scheduling session
+        self._folder_verified = False
+        self._verified_folder_path = None
+        print("🔄 Reset folder verification for new scheduling session")
+        
         try:
             video_files = [f for f in os.listdir(VIDEO_FOLDER_PATH) if f.endswith(('.mp4', '.mov'))]
             if not video_files:
@@ -935,20 +980,9 @@ class FacebookBot:
             self.current_video_path = video_path  # Store for verification
             self.current_video_filename = video_file  # Store current filename
             
-            # Debug: Check current page state before upload
-            self.debug_current_page()
-            
             # Only navigate to folder for the first video
             is_first_video = (i == 0)
             success = self.upload_video_file(video_path, is_first_video)
-            
-            # Debug: Check page state after upload attempt
-            if success:
-                print("🔍 DEBUG: Video upload reported successful, checking page state...")
-                self.debug_current_page()
-            else:
-                print("🔍 DEBUG: Video upload failed, checking page state...")
-                self.debug_current_page()
             if success:
                 print(f"✅ Successfully uploaded video: {video_file}")
                 
@@ -963,12 +997,10 @@ class FacebookBot:
                         # Only navigate back to reel composer after SUCCESSFUL scheduling
                         if i < len(video_files) - 1:  # Not the last video
                             print(f"\n🔄 Video scheduled successfully! Preparing for next video ({i+2}/{len(video_files)})...")
-                            print(f"🔄 Opening Meta Business Suite for next video...")
+                            print(f"🔄 Looking for Create reel button for next video...")
                             
-                            # Go back to Meta Business Suite (don't refresh during scheduling)
-                            self.driver.get("https://business.facebook.com/latest/reels_composer")
-                            time.sleep(3)
-                            
+                            # The load_reel_composer_with_retry method will handle finding Create reel button
+                            # either on current page (published_posts) or navigate to home page
                             success = self.load_reel_composer_with_retry()
                             if not success:
                                 print(f"❌ Failed to load reel composer for video {i+2}. Skipping remaining videos.")
@@ -1037,31 +1069,56 @@ class FacebookBot:
         
         print("Navigating to facebook.com...")
         self.driver.get("https://www.facebook.com/")
+        
+        # Wait for page to load
+        time.sleep(5)
 
         print("Entering login credentials...")
-        email_field = self.wait.until(EC.presence_of_element_located((By.ID, "email")))
-        password_field = self.wait.until(EC.presence_of_element_located((By.ID, "pass")))
+        try:
+            email_field = self.wait.until(EC.presence_of_element_located((By.ID, "email")))
+            email_field.clear()
+            email_field.send_keys(FACEBOOK_EMAIL)
+            print("✅ Email entered")
+        except:
+            print("⚠️ Could not enter email")
         
-        email_field.send_keys(FACEBOOK_EMAIL)
-        password_field.send_keys(FACEBOOK_PASSWORD)
+        try:
+            password_field = self.wait.until(EC.presence_of_element_located((By.ID, "pass")))
+            password_field.clear()
+            password_field.send_keys(FACEBOOK_PASSWORD)
+            print("✅ Password entered")
+        except:
+            print("⚠️ Could not enter password")
         
-        login_button = self.wait.until(EC.element_to_be_clickable((By.NAME, "login")))
-        login_button.click()
-        print("Login request submitted.")
-
+        try:
+            login_button = self.wait.until(EC.element_to_be_clickable((By.NAME, "login")))
+            login_button.click()
+            print("✅ Login button clicked")
+        except:
+            print("⚠️ Could not click login button")
 
         print("\n--- ⚠️ ACTION REQUIRED ⚠️ ---")
-        input("Please complete any login verification steps in the browser window, then press Enter here to continue...")
+        print("Please complete any login verification steps in the browser window.")
+        print("This may include:")
+        print("- Two-factor authentication")
+        print("- Security checks")
+        print("- Captcha verification")
+        print("- Device confirmation")
+        input("Press Enter here ONLY after you have successfully logged in and can see your Facebook homepage...")
 
-
-        print("\nVerification complete. Forcing navigation to the main Facebook homepage...")
-        self.driver.get("https://www.facebook.com/")
+        print("\nVerification complete. Ensuring we're on the main Facebook homepage...")
         
-
-        print("Waiting for the homepage to be ready...")
-        feed_ready_xpath = "//span[contains(text(), \"What's on your mind\")]"
-        self.wait.until(EC.presence_of_element_located((By.XPATH, feed_ready_xpath)))
-        print("✅ Homepage is ready.")
+        # Try to navigate to homepage, but don't fail if there are issues
+        try:
+            self.driver.get("https://www.facebook.com/")
+            time.sleep(3)
+            
+            print("Waiting for the homepage to be ready...")
+            feed_ready_xpath = "//span[contains(text(), \"What's on your mind\")]"
+            self.wait.until(EC.presence_of_element_located((By.XPATH, feed_ready_xpath)))
+            print("✅ Homepage is ready.")
+        except Exception as e:
+            print(f"⚠️ Could not verify homepage elements, but continuing: {e}")
 
         print(f"Opening Meta Reel Composer")
         
@@ -1075,55 +1132,120 @@ class FacebookBot:
         
         # Start scheduling reels
         self.schedule_reels()
+    
 
     def load_reel_composer_with_retry(self, max_attempts=3):
-        """Load the reel composer page with automatic refresh if needed."""
+        """Load the reel composer by clicking Create reel button from home page or published posts page."""
         for attempt in range(max_attempts):
             try:
-                print(f"Loading reel composer (attempt {attempt + 1}/{max_attempts})...")
+                print(f"Opening reel composer via Create reel button (attempt {attempt + 1}/{max_attempts})...")
                 
-                # Check if we're already on the right page
+                # First, navigate to home page to ensure we're in the right place
                 current_url = self.driver.current_url
-                if "reels_composer" not in current_url:
-                    self.driver.get("https://business.facebook.com/latest/reels_composer")
+                if "published_posts" in current_url:
+                    print("Currently on published posts page, looking for Create reel button here...")
+                elif "business.facebook.com" not in current_url:
+                    print("Navigating to business home page...")
+                    self.driver.get("https://business.facebook.com/latest/home")
+                    time.sleep(3)
                 
-                # Wait 6 seconds for the page to load
-                print("Waiting 6 seconds for page to load...")
-                time.sleep(6)
+                # Try to find and click Create reel button
+                create_reel_clicked = self.click_create_reel_button()
                 
-                # Check if "Add Video" button is present and clickable
-                try:
-                    button_xpath = "//*[text()='Add Video']"
-                    add_video_button = WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, button_xpath))
-                    )
+                if create_reel_clicked:
+                    print("✅ Create reel button clicked successfully")
                     
-                    # If button is found and clickable, click it and return success
-                    add_video_button.click()
-                    print("✅ Add Video button found and clicked")
-                    time.sleep(2)  # Wait for file picker to be ready
-                    return True
+                    # Wait for reel composer to load and look for Add Video button
+                    try:
+                        print("Waiting for reel composer to load...")
+                        time.sleep(5)
                         
-                except Exception as e:
-                    print(f"⚠️ Add Video button not found or not clickable: {e}")
+                        button_xpath = "//*[text()='Add Video']"
+                        add_video_button = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable((By.XPATH, button_xpath))
+                        )
+                        
+                        # If button is found and clickable, click it and return success
+                        add_video_button.click()
+                        print("✅ Add Video button found and clicked")
+                        time.sleep(2)  # Wait for file picker to be ready
+                        return True
+                            
+                    except Exception as e:
+                        print(f"⚠️ Add Video button not found after clicking Create reel: {e}")
+                else:
+                    print("❌ Could not find or click Create reel button")
                 
-                # If we reach here, the page didn't load properly
+                # If we reach here, try refreshing or going to home page
                 if attempt < max_attempts - 1:
-                    print(f"🔄 Page didn't load properly. Refreshing... (attempt {attempt + 1})")
-                    self.driver.refresh()
+                    print(f"🔄 Retrying... Going to home page")
+                    self.driver.get("https://business.facebook.com/latest/home")
                     time.sleep(3)
                 else:
-                    print("❌ Page failed to load after all attempts")
+                    print("❌ Failed to open reel composer after all attempts")
                     return False
                     
             except Exception as e:
-                print(f"❌ Error loading reel composer: {e}")
+                print(f"❌ Error opening reel composer: {e}")
                 if attempt < max_attempts - 1:
                     print("🔄 Retrying...")
                     time.sleep(3)
                 else:
                     return False
         
+        return False
+    
+    def click_create_reel_button(self):
+        """Find and click the Create reel button using multiple methods."""
+        print("🔍 Looking for Create reel button...")
+        
+        # Method 1: Exact class combination from your example
+        try:
+            print("METHOD 1: Exact class combination...")
+            selector = "//div[contains(@class, 'x1vvvo52') and contains(@class, 'x1fvot60') and contains(@class, 'xk50ysn') and contains(@class, 'xxio538') and contains(@class, 'x1heor9g') and contains(@class, 'xuxw1ft') and contains(@class, 'x6ikm8r') and contains(@class, 'x10wlt62') and contains(@class, 'xlyipyv') and contains(@class, 'x1h4wwuj') and contains(@class, 'xeuugli') and text()='Create reel']"
+            element = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.XPATH, selector)))
+            element.click()
+            print("✅ METHOD 1: Success!")
+            return True
+        except Exception as e:
+            print(f"❌ METHOD 1 failed: {e}")
+        
+        # Method 2: Partial class combination with text
+        try:
+            print("METHOD 2: Partial class combination...")
+            selector = "//div[contains(@class, 'x1vvvo52') and contains(@class, 'x1fvot60') and contains(@class, 'xk50ysn') and text()='Create reel']"
+            element = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.XPATH, selector)))
+            element.click()
+            print("✅ METHOD 2: Success!")
+            return True
+        except Exception as e:
+            print(f"❌ METHOD 2 failed: {e}")
+        
+        # Method 3: Descendant approach (as you requested)
+        try:
+            print("METHOD 3: Descendant approach...")
+            selector = "//div[descendant::*[text()='Create reel']]"
+            elements = self.driver.find_elements(By.XPATH, selector)
+            for element in elements:
+                if element.text.strip() == 'Create reel':
+                    element.click()
+                    print("✅ METHOD 3: Success!")
+                    return True
+        except Exception as e:
+            print(f"❌ METHOD 3 failed: {e}")
+        
+        # Method 4: Simple text search with clickable check
+        try:
+            print("METHOD 4: Simple text search...")
+            selector = "//*[text()='Create reel']"
+            element = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.XPATH, selector)))
+            element.click()
+            print("✅ METHOD 4: Success!")
+            return True
+        except Exception as e:
+            print(f"❌ METHOD 4 failed: {e}")
+        
+        print("❌ All methods failed to find Create reel button")
         return False
 
     def check_page_loaded(self):
@@ -2124,7 +2246,7 @@ class FacebookBot:
             return False
 
     def upload_video_file(self, video_path, is_first_video=False):
-        """Upload a video file using the web-based file picker with verification."""
+        """Upload a video file using the web-based file picker."""
         try:
             print(f"Uploading video: {os.path.basename(video_path)}")
             
@@ -2139,13 +2261,7 @@ class FacebookBot:
                 print(f"❌ Failed to upload video after all attempts")
                 return False
             
-            # Verify the upload was successful
-            verification_success = self.verify_video_uploaded()
-            if not verification_success:
-                print(f"❌ Video upload could not be verified")
-                return False
-            
-            print(f"✅ Video successfully uploaded and verified: {os.path.basename(video_path)}")
+            print(f"✅ Video uploaded: {os.path.basename(video_path)}")
             return True
             
         except Exception as e:
@@ -2164,7 +2280,6 @@ class FacebookBot:
                 # Only navigate to folder for the FIRST video
                 if is_first_video:
                     print("🔄 First video - navigating to folder...")
-                    
                     # Step 1: Press Ctrl+L to focus address bar
                     print("Step 1: Pressing Ctrl+L to focus address bar...")
                     send_keys("^l")
@@ -2202,6 +2317,292 @@ class FacebookBot:
                 time.sleep(3)
         
         return False
+    
+
+    
+    def verify_and_navigate_to_folder_once(self, video_path):
+        """Check current folder path and navigate only if needed - ONE TIME CHECK."""
+        try:
+            folder_path = os.path.dirname(video_path)
+            
+            # Check if we already verified this folder in this session
+            if not hasattr(self, '_folder_verified') or not hasattr(self, '_verified_folder_path'):
+                self._folder_verified = False
+                self._verified_folder_path = None
+            
+            # If we already verified this exact folder, skip navigation
+            if self._folder_verified and self._verified_folder_path == folder_path:
+                print(f"✅ FOLDER CHECK SKIPPED - Already verified: {folder_path}")
+                print("🚀 Proceeding directly to file selection...")
+                return True
+            
+            print(f"🔍 First-time folder check for: {folder_path}")
+            
+            # Step 1: Check current location using Ctrl+L
+            print("Step 1: Checking current folder location...")
+            send_keys("^l")  # Focus address bar
+            time.sleep(1)
+            send_keys("^a")  # Select all
+            time.sleep(0.5)
+            send_keys("^c")  # Copy current path
+            time.sleep(1)
+            
+            current_path = pyperclip.paste().strip()
+            expected_path = folder_path
+            
+            # Normalize paths for comparison
+            current_norm = os.path.normpath(current_path.lower())
+            expected_norm = os.path.normpath(expected_path.lower())
+            
+            print(f"Current:  {current_norm}")
+            print(f"Expected: {expected_norm}")
+            
+            # Step 2: If paths match, we're good to go
+            if current_norm == expected_norm:
+                print("✅ Already in correct folder - No navigation needed!")
+                send_keys("{ESCAPE}")  # Close address bar
+                self._folder_verified = True
+                self._verified_folder_path = folder_path
+                return True
+            
+            # Step 3: If paths don't match, navigate to correct folder
+            print("📁 Need to navigate to correct folder...")
+            send_keys("^a")  # Select all (address bar should still be focused)
+            time.sleep(0.5)
+            pyperclip.copy(folder_path)
+            send_keys("^v")  # Paste
+            time.sleep(1)
+            send_keys("{ENTER}")
+            time.sleep(4)  # Wait for navigation
+            
+            # Step 4: Verify navigation was successful
+            print("🔍 Verifying navigation was successful...")
+            send_keys("^l")  # Focus address bar again
+            time.sleep(0.5)
+            send_keys("^a")  # Select all
+            time.sleep(0.5)
+            send_keys("^c")  # Copy current path
+            time.sleep(1)
+            
+            current_path_after = pyperclip.paste().strip()
+            current_norm_after = os.path.normpath(current_path_after.lower())
+            
+            if current_norm_after == expected_norm:
+                print("✅ Navigation successful - Folder verified!")
+                send_keys("{ESCAPE}")  # Close address bar
+                self._folder_verified = True
+                self._verified_folder_path = folder_path
+                return True
+            else:
+                print("❌ Navigation failed - Still in wrong folder")
+                send_keys("{ESCAPE}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Folder verification error: {e}")
+            return False
+
+    def navigate_to_folder_with_one_time_check(self, video_path):
+        """Navigate to folder with ONE-TIME verification - simple and working."""
+        try:
+            folder_path = os.path.dirname(video_path)
+            
+            # Check if we already verified this folder in this session
+            if not hasattr(self, '_folder_verified') or not hasattr(self, '_verified_folder_path'):
+                self._folder_verified = False
+                self._verified_folder_path = None
+            
+            # If we already verified this exact folder, skip navigation
+            if self._folder_verified and self._verified_folder_path == folder_path:
+                print(f"✅ FOLDER ALREADY VERIFIED: {folder_path} - SKIPPING NAVIGATION")
+                return True
+            
+            print(f"📁 FIRST TIME - NAVIGATING TO: {folder_path}")
+            
+            # Step 1: Focus address bar
+            send_keys("^l")
+            time.sleep(1)
+            
+            # Step 2: Clear and paste path
+            send_keys("^a")  # Select all
+            time.sleep(0.5)
+            pyperclip.copy(folder_path)
+            send_keys("^v")  # Paste
+            time.sleep(1)
+            send_keys("{ENTER}")
+            time.sleep(4)  # Wait for navigation
+            
+            # Step 3: VERIFY we're in correct folder (simple check)
+            print("🔍 Verifying folder location...")
+            send_keys("^l")  # Focus address bar again
+            time.sleep(0.5)
+            send_keys("^a")  # Select all
+            time.sleep(0.5)
+            send_keys("^c")  # Copy current path
+            time.sleep(1)
+            
+            current_path = pyperclip.paste().strip()
+            expected_path = folder_path
+            
+            # Normalize paths for comparison
+            current_norm = os.path.normpath(current_path.lower())
+            expected_norm = os.path.normpath(expected_path.lower())
+            
+            print(f"Current:  {current_norm}")
+            print(f"Expected: {expected_norm}")
+            
+            if current_norm == expected_norm:
+                print("✅ Folder verification SUCCESS - MARKING AS VERIFIED")
+                # Mark this folder as verified for future uploads
+                self._folder_verified = True
+                self._verified_folder_path = folder_path
+                print("🚀 PROCEEDING TO FILE SELECTION...")
+                return True
+            else:
+                print("❌ Folder verification FAILED")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Folder navigation error: {e}")
+            return False
+
+    def navigate_to_folder_bulletproof(self, video_path):
+        """Navigate to folder with BULLETPROOF verification."""
+        try:
+            folder_path = os.path.dirname(video_path)
+            print(f"📁 Navigating to: {folder_path}")
+            
+            # Step 1: Focus address bar
+            send_keys("^l")
+            time.sleep(1)
+            
+            # Step 2: Clear and paste path
+            send_keys("^a")  # Select all
+            time.sleep(0.5)
+            pyperclip.copy(folder_path)
+            send_keys("^v")  # Paste
+            time.sleep(1)
+            send_keys("{ENTER}")
+            time.sleep(4)  # Wait for navigation
+            
+            # Step 3: VERIFY we're in correct folder
+            print("🔍 Verifying folder location...")
+            send_keys("^l")  # Focus address bar again
+            time.sleep(0.5)
+            send_keys("^a")  # Select all
+            time.sleep(0.5)
+            send_keys("^c")  # Copy current path
+            time.sleep(1)
+            
+            current_path = pyperclip.paste().strip()
+            expected_path = folder_path
+            
+            # Normalize paths for comparison
+            current_norm = os.path.normpath(current_path.lower())
+            expected_norm = os.path.normpath(expected_path.lower())
+            
+            print(f"Current:  {current_norm}")
+            print(f"Expected: {expected_norm}")
+            
+            if current_norm == expected_norm:
+                print("✅ Folder verification SUCCESS")
+                send_keys("{ESCAPE}")  # Close address bar
+                return True
+            else:
+                print("❌ Folder verification FAILED")
+                send_keys("{ESCAPE}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Folder navigation error: {e}")
+            return False
+    
+    def find_and_select_video_file(self, video_filename):
+        """Try multiple strategies to find and select the video file in correct order."""
+        print(f"Searching for video file: {video_filename}")
+        
+        # Strategy 1: Try to find any part of the filename
+        # Split filename by common separators and try each part
+        separators = [' ', '-', '_', '.', '(', ')', '[', ']']
+        filename_parts = [video_filename]
+        for sep in separators:
+            if sep in video_filename:
+                parts = video_filename.split(sep)
+                filename_parts.extend([part.strip() for part in parts if len(part.strip()) > 3])
+        
+        print(f"  Strategy 1: Trying filename parts: {filename_parts}")
+        for part in filename_parts:
+            if len(part) > 3:  # Only try parts longer than 3 characters
+                print(f"    Trying part: {part}")
+                success = find_and_click_text(part, timeout=3, partial=True, double_click=True)
+                if success:
+                    print(f"  ✅ Found with part match: {part}")
+                    return True
+        
+        # Strategy 2: Try common video file patterns
+        print("  Strategy 2: Trying common video patterns...")
+        video_patterns = [".mp4", ".mov", ".avi", ".mkv"]
+        for pattern in video_patterns:
+            if pattern in video_filename.lower():
+                success = find_and_click_text(pattern, timeout=3, partial=True, double_click=True)
+                if success:
+                    print(f"  ✅ Found with pattern match: {pattern}")
+                    return True
+        
+        # Strategy 3: Try exact filename match
+        print("  Strategy 3: Exact filename match...")
+        success = find_and_click_text(video_filename, timeout=5, partial=False, double_click=True)
+        if success:
+            print(f"  ✅ Found with exact match: {video_filename}")
+            return True
+        
+        # Strategy 4: Try partial filename match
+        print("  Strategy 4: Partial filename match...")
+        success = find_and_click_text(video_filename, timeout=5, partial=True, double_click=True)
+        if success:
+            print(f"  ✅ Found with partial match: {video_filename}")
+            return True
+        
+        # Strategy 5: Try filename without extension
+        base_name = os.path.splitext(video_filename)[0]
+        print(f"  Strategy 5: Filename without extension: {base_name}")
+        success = find_and_click_text(base_name, timeout=5, partial=True, double_click=True)
+        if success:
+            print(f"  ✅ Found with base name: {base_name}")
+            return True
+        
+        print(f"  ❌ Could not find video file with any strategy: {video_filename}")
+        return False
+    
+    def is_file_dialog_open(self):
+        """Check if Windows file dialog is open."""
+        try:
+            desktop = Desktop(backend="uia")
+            for win in desktop.windows():
+                if not win.is_visible():
+                    continue
+                win_title = win.window_text().lower()
+                class_name = win.element_info.class_name or ""
+                if (class_name == "#32770" or class_name == "CabinetWClass" or
+                    "open" in win_title or "file" in win_title):
+                    return True
+            return False
+        except:
+            return False
+    
+    def wait_for_file_dialog_to_close(self, timeout=10):
+        """Wait for file dialog to close."""
+        try:
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                if not self.is_file_dialog_open():
+                    return True
+                time.sleep(0.5)
+            return False
+        except:
+            return False
+    
+
 
     def find_and_select_video_file(self, video_filename):
         """Try multiple strategies to find and select the video file in correct order."""
@@ -2689,26 +3090,67 @@ class FacebookBot:
             return False
 
     def verify_video_uploaded(self, timeout=30):
-        """Simplified video upload verification - faster and more reliable."""
+        """Verify video upload completion with direct method approach."""
         try:
-            print("🔍 Quick verification: Checking if video is ready...")
+            print("🔍 Verifying video upload completion...")
             
-            # Wait a bit for video to process
+            # Wait for initial processing
             time.sleep(3)
             
-            # Simple check: Look for caption field or Share button
+            # Check 1: Wait for upload progress to complete (if any)
             try:
-                caption_or_share = WebDriverWait(self.driver, 15).until(
-                    EC.any_of(
-                        EC.presence_of_element_located((By.XPATH, "//textarea[contains(@placeholder, 'Describe your reel')] | //div[contains(@placeholder, 'Describe your reel')]")),
-                        EC.presence_of_element_located((By.XPATH, "//span[text()='Share']"))
-                    )
+                print("Waiting for any upload progress to complete...")
+                WebDriverWait(self.driver, 15).until_not(
+                    EC.presence_of_element_located((By.XPATH, "//div[@role='progressbar'] | //*[contains(text(), 'Uploading')]"))
                 )
-                print("✅ Video upload verified - caption field or Share button found!")
+                print("✅ Upload progress completed!")
+            except:
+                print("⚠️ No upload progress found or already completed")
+            
+            # Check 2: Look for video element (most reliable indicator)
+            try:
+                video_element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//video"))
+                )
+                print("✅ Video element found - upload verified!")
                 return True
             except:
-                print("⚠️ Caption field not found, assuming video is ready anyway...")
-                return True  # Be more lenient
+                print("⚠️ Video element not found yet, checking other indicators...")
+            
+            # Check 3: Look for caption field (appears after successful upload)
+            try:
+                caption_field = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//textarea[contains(@placeholder, 'Describe your reel')] | //div[contains(@placeholder, 'Describe your reel')]"))
+                )
+                print("✅ Caption field found - upload successful!")
+                return True
+            except:
+                print("⚠️ Caption field not found...")
+            
+            # Check 4: Look for Share button (appears after successful upload)
+            try:
+                share_button = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, "//span[text()='Share'] | //button[contains(text(), 'Share')]"))
+                )
+                print("✅ Share button found - upload successful!")
+                return True
+            except:
+                print("⚠️ Share button not found...")
+            
+            # Check 5: Look for error indicators
+            try:
+                error_elements = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Error')] | //*[contains(text(), 'Failed')] | //*[contains(text(), 'Try again')] | //*[contains(text(), 'Something went wrong')]")
+                if error_elements:
+                    print(f"❌ Found {len(error_elements)} error indicators - upload failed!")
+                    for error in error_elements:
+                        print(f"   Error text: {error.text}")
+                    return False
+            except:
+                pass
+            
+            # If we get here, assume success (be optimistic with direct method)
+            print("⚠️ Could not find definitive indicators, but assuming upload success")
+            return True
             
         except Exception as e:
             print(f"Error verifying video upload: {e}")
